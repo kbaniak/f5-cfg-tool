@@ -1,0 +1,15 @@
+{
+  "system":      "any",
+  "system-ip":   "*",
+  "sw-version":  "*",
+  "author":      "Krystian Baniak",
+  "version":     "1.0",
+  "description": "MoP: save system into ucs and download",
+  "steps": [
+    "SAVE", "MAKE_UCS"
+  ],
+  "options": {
+    "working-directory":  "/Images/Shared/",
+    "remove_created_ucs": "no"
+  }
+}
