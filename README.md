@@ -42,4 +42,8 @@ SOAP::Lite
 MIME::Base64
 ```
 
-
+Fedora Linux system users may use dnf to install the dependencies:
+```
+dnf install perl-IO-Tee perl-SOAP-Lite perl-Getopt-Simple perl-Digest-SHA perl-TermReadKey
+dnf install perl-LWP-Determined perl-HTTP-Request-Params perl-Data-Dumper perl-Text-Diff perl-MIME-Base64
+```
