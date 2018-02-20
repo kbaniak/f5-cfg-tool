@@ -52,7 +52,7 @@ sub PATCH  { _simple_req('PATCH',  @_); }
 # --
 
 our ( %opts );
-getopts('u:p:O:t:q:dhAikKTrQc:C:I:sSx:R:w:l:b:Z:P:', \%opts);
+getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:Z:P:', \%opts);
 
 unless ($opts{'Q'}) {
   print("(C) 2018, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
@@ -85,7 +85,7 @@ if ($opts{'h'}){
    -q query     : single query mode, will not produce output file
    -u user      : user, default is admin
    -p password  : password, default is admin
-   -i           : password will be read from the stdin after a prompt
+   -f           : password will be read from the stdin after a prompt
    -t host      : f5 mgmt interface's IP address to query
    -A           : create archive containing iRules and iCall scripts
    -l name      : label used to create archive file name (affects -A option)
@@ -162,7 +162,7 @@ unless (-e "./cfg/.ccache.json") {
 }
 $cache->open;
 # interactive password retrieval
-if ($opts{'i'}) {
+if ($opts{'f'}) {
   $pass = $cache->getUserCredentials;
 }
 #-------------------------------------------------
