@@ -1,0 +1,1649 @@
+#!/usr/bin/perl -w
+
+#
+# (C) Krystian Baniak 2018
+#
+# contact: krystian.baniak@exios.pl
+# license: MIT
+# program: f5-cfg
+# description: tool for managing F5 LTM devices via iControl REST
+#              allows for batch processing for complex transactions
+#
+
+use strict;
+
+BEGIN {
+  use Cwd;
+  use File::Basename;
+  my $__base = dirname(__FILE__);
+  if ( -l __FILE__) {
+    $__base = dirname(readlink(__FILE__));
+  }
+  chdir($__base) || die ". cannot chdir into $__base";
+  push (@INC, "./lib");
+  printf ". running from dir: %s\n", getcwd();
+}
+
+use Switch;
+use JSON;
+use Data::Dumper;
+use HTTP::Request::Common;
+use HTTP::Request;
+use Getopt::Std;
+use LWP::UserAgent;
+use Digest::SHA qw(sha1 sha1_hex sha1_base64);
+use File::Path qw(remove_tree);
+use POSIX qw(strftime);
+use Text::Diff;
+use IO::Tee;
+
+use CAudit;
+use CCache;
+use COpts;
+
+my $version = '1.0.1';
+
+# --------- DEBUG vars -----------------
+my $debug_rules = 0;
+my $db_cr = 0;
+
+# -- hack needed to support F5 iCR API transactions
+sub PATCH  { _simple_req('PATCH',  @_); }
+# --
+
+our ( %opts );
+getopts('u:p:O:t:q:dhAikKTrQc:C:I:sSx:R:w:l:b:Z:P:', \%opts);
+
+unless ($opts{'Q'}) {
+  print("(C) 2018, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
+}
+#-------------------------------------------------
+# advanced options parser
+my $popts = COpts->new();
+if ($opts{'O'}) {
+  $popts->parse( $opts{'O'} );
+  if ($popts->isFailed()){
+    print "-- error in parsing options! Aborting ...\n";
+    exit 3;
+  }
+}
+#-------------------------------------------------
+# help message
+if ($opts{'h'}){
+  my $__odefs = $popts->describe;
+  my $__bdefs = $popts->batch_describe;
+  print <<QQQ
+--- [*] help section:
+
+ invocation:
+   $0 <options>
+
+ options:
+ --------------------------------------------------------------------------------------------
+
+   -h           : this help message
+   -q query     : single query mode, will not produce output file
+   -u user      : user, default is admin
+   -p password  : password, default is admin
+   -i           : password will be read from the stdin after a prompt
+   -t host      : f5 mgmt interface's IP address to query
+   -A           : create archive containing iRules and iCall scripts
+   -l name      : label used to create archive file name (affects -A option)
+   -i           : identify f5 box
+   -k           : verify iRule versions and allocation to virtual servers
+   -K           : verify listeners and their allocation to virtual servers
+   -c name      : create iRule or other resource from a file given in -I option
+   -C name      : update iRule or other resource from a file given in -I option
+   -I           : input resource
+   -P           : port to connect to
+   -r           : retain temporal objects (used with -A option)
+   -s           : save config
+   -S           : sync cluster
+   -w           : working directory
+   -b name      : batch mode that uses json file as input
+   -Z step      : select step set from a step set list
+
+   -x cmd       : execute advanced script action
+   -R name      : run special report name [ availability depends on version ]
+   -T           : use token based authentication
+   -Q           : quiet mode - supress logs to a file
+   -O opts      : list of options param=value,param=value, use %20 to escape a white space
+                  example:  base=gen8.2/test,label=ala%20ma%20kota
+
+ --------------------------------------------------------------------------------------------
+
+ list of known options:
+$__odefs
+
+ list of known batch commands
+$__bdefs
+
+--- *
+QQQ
+  ;
+  exit;
+}
+
+STDOUT->autoflush(1);
+
+# -- cached F5 nodes
+my %nodes = (
+  'test'  => '192.168.1.254'
+);
+my %props = ();
+my %srun = ();
+# ----------------- SETTINGS --------------------
+my $usr   = $opts{'u'} || 'admin';
+my $pass  = $opts{'p'} || 'admin';
+my $host  = $opts{'t'} || '192.168.1.254';
+my $ifns  = $opts{'I'} || 'input.txt';
+my $wDir  = $opts{'w'} || '';
+my $Label = $opts{'l'} || '';
+my $bstep = $opts{'Z'} || '';
+my $URL_BARE = "https://$host/";
+my $URL   = "https://$host/mgmt/tm/";
+my $URLB  = "https://$host/mgmt/shared/authn/login";
+my $host_name = $host;
+my $tmp_stmp = &gen_tmstmp;
+my %ems;
+my $tks = '';
+if ($opts{'P'}) {
+  $URL_BARE = "https://$host:$opts{'P'}/";
+  $URL   = "https://$host:$opts{'P'}/mgmt/tm/";
+  $URLB  = "https://$host:$opts{'P'}/mgmt/shared/authn/login";
+}
+#-------------------------------------------------
+# Authentication Cache
+my $cache = CCache->new("./cfg/.ccache.json");
+unless (-e "./cfg/.ccache.json") {
+  print "-- creating new empty cache file.\n";
+  $cache->setup_authcache( \%nodes );
+  $cache->save;
+}
+$cache->open;
+# interactive password retrieval
+if ($opts{'i'}) {
+  $pass = $cache->getUserCredentials;
+}
+#-------------------------------------------------
+# Log file settings
+# by default we make a transation log fom every script invocation
+# the results are kept in the logfiles directory
+unless (-e "logfiles" && -d "logfiles") {
+  mkdir "logfiles";
+}
+my $log_fname = "logfiles/config-audit-log-${tmp_stmp}.log";
+if ($popts->get('onelog') eq "yes") {
+  $log_fname = "logfiles/config-audit-log.log";
+}
+my $tee = \*STDOUT;
+if ($opts{'Q'} or ($popts->get('supress_log') eq "yes")) {
+  #print "+ supressing transactional logging...\n";
+} else {
+  $tee = new IO::Tee(\*STDOUT, new IO::File(">$log_fname"));
+}
+#-------------------------------------------------
+# determine host and authentication details
+&update_host( $host );
+#-------------------------------------------------
+# working directory settings
+my $remove_temp = 1;
+if ($opts{'r'}) { $remove_temp = 0; }
+if ($wDir ne '') {
+  $wDir .= '/';
+  if (! -e $wDir) {
+    printf $tee "!-- working directory not found: $wDir\n";
+    exit;
+  }
+}
+#------------------------------------------------
+# LWP settings
+my $ua   = new LWP::UserAgent;
+$ua->timeout(20);
+$ua->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
+#------------------------------------------------
+# F5 token based authentication
+if ($opts{'T'}) {
+  $tks = &tokenRequest;
+  #print Dumper($tks);
+  if ($tks->{token}) {
+    $tks = $tks->{token}{token};
+    print "++ token: $tks\n";
+  }
+}
+#-----------------------------------------------
+# Properties are needed for Batch mode
+if ($popts->get('bigiq') ne '') {
+
+} else {
+  # get big-ip properties
+  &update_platform_properties;
+  if ($opts{'i'}){
+    &print_platform_properties;
+  }
+}
+#-----------------------------------------------
+# batch mode
+if ($opts{'b'}) {
+  printf $tee "+ running in a batch mode\n";
+  printf $tee "+-- input file: $opts{'b'}\n";
+  &batch_mode( $opts{'b'} );
+  exit;
+}
+#-----------------------------------------------
+# single query mode
+if ($opts{'q'}) {
+ printf $tee "received query: $opts{'q'}\n";
+ my $p = $opts{'q'};
+ if ($p and $p ne '-') {
+   my $curl = $URL;
+   if ($popts->get('bigiq') ne '') {
+     $curl = $URL_BARE;
+   }
+   if ($popts->get('format') eq 'json') {
+     printf $tee &query2json( $curl . $p );
+   } else {
+     printf $tee Dumper( &query2object( $curl . $p ));
+   }
+ }
+ exit;
+}
+#------------------------------------------------
+# cmd mode
+if ($opts{'x'}) {
+  my $data = &runGenericCommand($opts{'x'});
+  if ($popts->get("respOnly") ne "") {
+    if (defined $data->{'commandResult'}) {
+      print $tee $data->{'commandResult'};
+    } else {
+      print $tee "-- command failed. \n";
+    }
+  } else {
+    print Dumper( $data );
+  }
+  exit;
+}
+#-----------------------------------------------
+# Report mode
+if ($opts{'R'}) {
+  if ($opts{'i'}){
+    &update_platform_properties;
+    &print_platform_properties;
+  }
+  printf $tee "+ running report: $opts{'R'} \n";
+  my $tms = strftime("%a %d %b %H:%M:%S %Y", localtime);
+  printf $tee "+ timestamp: %s\n", $tms;
+  switch ($opts{'R'}) {
+    case 'RULE' {
+      &report_irules;
+    }
+    case 'ISTATS' {
+      &report_istats_generic;
+    }
+  }
+  exit;
+}
+#-----------------------------------------------
+# create commands
+if ($opts{'c'} or $opts{'C'}) {
+  my $_t = 'rule';
+  if ($popts->get('ctype') ne "") {
+    $_t = $popts->get('ctype');
+  }
+  if ($opts{'c'}) {
+    printf $tee "+ creating resource of type: $_t: $opts{'c'}\n";
+    &createResource($_t, $opts{'c'}, 'Common', $ifns,'');
+  } else {
+    printf $tee "+ updating resource of type: $_t: $opts{'C'}\n";
+    &updateResource($_t, $opts{'C'}, 'Common', $ifns);
+  }
+  exit;
+}
+#-----------------------------------------------
+if ($opts{'k'}) {
+  printf $tee "+ analysing iRules and their alloactions ...\n";
+  &checkRules( 1 );
+  exit;
+}
+#-----------------------------------------------
+if ($opts{'K'}) {
+  printf $tee "+ analysing Listeners and their alloactions ...\n";
+  &checkVirtuals;
+  exit;
+}
+#-----------------------------------------------
+if ($opts{'s'}) {
+  printf $tee "+ saving configuration ...\n";
+  &saveRunConfig;
+  exit;
+}
+#-----------------------------------------------
+if ($opts{'S'}) {
+  if (defined $props{'failover cluster'}) {
+    printf $tee "+ synchronizing configuration in the cluster: $props{'failover cluster'}...\n";
+    &syncCluster( $props{'failover cluster'} );
+  }
+  exit;
+}
+#-----------------------------------------------
+# save iRules and iCall scripts into an archive
+#
+if ( $opts{'A'} ) {
+  if ($wDir ne '') { printf $tee "++ using workdir: $wDir\n"; }
+  my $d = "${host_name}_archive";
+  if ($Label ne '') {
+    $d = "${Label}_archive_${host_name}_${tmp_stmp}";
+  }
+  print "++ creating databook archive: $d\n";
+  mkdir $d;
+  mkdir "$d/iRules";
+  my $rules = &query2object( $URL . 'ltm/rule');
+  if ($debug_rules) { print Dumper($rules); }
+  foreach my $r ( @{ $rules->{'items'} }) {
+    next if ($r->{'name'} =~ /^_sys_/);
+    printf $tee "dumping iRule: $r->{'name'}, partition: $r->{'partition'}\n";
+    unless (-e "$d/iRules/$r->{'partition'}"){
+      mkdir "$d/iRules/$r->{'partition'}";
+    }
+    open my $fh, ">", "$d/iRules/$r->{'partition'}/$r->{'name'}.tcl" or die "--- Error: Cannot create iRule file!\n";
+    print $fh $r->{'apiAnonymous'};
+    close($fh);
+  }
+
+  mkdir "$d/Scripts";
+  my $scr = &query2object( $URL . 'cli/script' );
+  foreach my $r ( @{ $scr->{'items'} } ) {
+    printf $tee "dumping cli script: $r->{'name'}, partition: $r->{'partition'}\n";
+    unless (-e "$d/Scripts/$r->{'partition'}"){
+      mkdir "$d/Scripts/$r->{'partition'}";
+    }
+    open my $fh, ">", "$d/Scripts/$r->{'partition'}/$r->{'name'}.tcl" or die "--- Error: Cannot create iRule file!\n";
+    print $fh $r->{'apiAnonymous'};
+    close($fh);
+  }
+
+  my $dg = &query2object( $URL . 'ltm/data-group/internal');
+  my $js = JSON->new;
+  $js->pretty();
+  open my $fh, ">", "$d/data-groups-internal.json" or die "--- Error: Cannot create dg file!\n";
+  foreach my $r ( @{ $dg->{'items'} }) {
+    print $fh $js->encode($r);
+  }
+  close($fh);
+
+  if ($^O eq "MSWin32") {
+    `tar -cf $wDir$d.tar $d/`;
+  } else {
+    `tar -cf $wDir$d.tar $d/`;
+  }
+  if ($remove_temp) {
+    printf $tee "... trying to remove directory";
+    remove_tree("$d");
+  }
+}
+printf $tee "+++ job's done.";
+exit;
+
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Routines
+
+# update platform structures
+sub update_platform_properties {
+  %props = &get_propsy;
+  %srun  = &get_running_software;
+}
+# print information about F5 device (or a cluster node)
+sub print_platform_properties {
+  printf $tee "system properties: \n";
+  foreach my $k (sort keys %props){
+    printf $tee "  %40s: %s\n", $k, $props{$k};
+  }
+  foreach my $k (sort keys %srun){
+    printf $tee "  %40s: %s\n", $k, $srun{$k};
+  }
+}
+#
+# update host structures
+sub update_host {
+  my $_h = shift;
+
+  if ($_h =~ /^[a-zA-Z]/){
+    $host_name = $_h;
+    if (defined( $nodes{ $_h } )){
+      $host = $nodes{ $_h };
+      $URL_BARE = "https://$host/";
+      $URL = "https://$host/mgmt/tm/";
+      $URLB = "https://$host/mgmt/shared/authn/login";
+      unless ($opts{'Q'}) { printf $tee "+ host $host_name mapped to: [ $host ]\n"; }
+    } else {
+      printf $tee "--- unknown host given!\n";
+      exit;
+    }
+  }
+  my ($_u,$_p) = $cache->check_auth( $_h );
+  if (($_u ne 'x') and ($_u ne $usr)) { $usr = $_u; }
+  if (($_p ne 'x') and ($_p ne $pass)) { $pass = $_p; }
+}
+#
+# generate timestamp
+sub gen_tmstmp {
+  my $ss = strftime "%d%m%y-%H%M%S", localtime;
+  return $ss;
+}
+
+sub tokenRequest() {
+  my $js = JSON->new;
+  my $z = {
+    username           => $usr,
+    password           => $pass,
+    loginProviderName  => 'tmos',
+  };
+  $js->pretty();
+
+  my $r = POST $URLB, 'Content-Type' => 'application/json', 'Content' => $js->encode( $z );
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($cd ne 200) {
+    printf $tee "--- http post req error, code: $cd\n";
+    printf $tee "--- response: $resp\n";
+    exit;
+  }
+
+  return decode_json($res->content);
+}
+#
+# get system properties
+sub get_propsy {
+  my %p;
+  my $r = &query2object( $URL . 'sys/hardware');
+  $p{'marketingName'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform/0'}{'nestedStats'}{'entries'}{'marketingName'}{'description'};
+  $p{'baseMac'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform/0'}{'nestedStats'}{'entries'}{'baseMac'}{'description'};
+  $p{'bigipChassisSerialNum'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info/0'}{'nestedStats'}{'entries'}{'bigipChassisSerialNum'}{'description'};
+  $p{'platform'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info/0'}{'nestedStats'}{'entries'}{'platform'}{'description'};
+  $r = &query2object( $URL . 'cm/device-group');
+  foreach my $e ( @{ $r->{'items'} }) {
+    if ($e->{'type'} eq 'sync-failover') {
+      $p{'failover cluster'} = $e->{'name'};
+    }
+  }
+  $r = &query2object( $URL . 'cm/device' );
+  $p{'fovState'} = 'passive';
+  foreach my $e ( @{ $r->{'items'}} ) {
+    if ($e->{'managementIp'} eq $host) {
+      if ($e->{'failoverState'} eq 'active'){
+        $p{'fovState'} = 'active';
+      }
+    }
+  }
+  return %p;
+}
+#
+# query 2 JSON
+sub query2json {
+  my $uri = shift;
+  my $mode = shift || 'no';
+  if ($mode eq 'yes') {
+    $uri =~ s/localhost/$host/;
+  }
+  if ($opts{'P'}){
+    if ($uri =~ /^https:\/\/([^\/:]+)\/(.+)$/) {
+      $uri = "https://$1:$opts{'P'}/$2";
+      print ". modif --> $uri\n";
+    }
+  }
+  my $r = GET $uri;
+  if ($opts{'T'}){
+    $r = GET $uri, 'X-F5-Auth-Token' => $tks;
+  } else {
+    $r->authorization_basic($usr, $pass);
+  }
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  my $js = JSON->new;
+  $js->pretty;
+
+  if ($cd ne 200) {
+    if (($cd eq 404) && ($resp =~ /was not found/)){
+      return $js->encode( { error => 'not found' } );
+    } else {
+      printf $tee "--- http get req error, code: $cd\n";
+      printf $tee "--- response: $resp\n";
+      exit;
+    }
+  }
+  return $js->encode( $js->decode($res->content) );
+}
+#
+# query 2 perl object
+sub query2object {
+  my $uri = shift;
+  my $mode = shift || 'no';
+  return decode_json( &query2json( $uri, $mode ) );
+}
+
+sub postRequest() {
+  my $u = shift;
+  my $js = shift;
+  my $deb = shift || 'no';
+  my $r = POST $u, 'Content-Type' => 'application/json', 'Content' => $js;
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($deb eq 'yes') {
+    print $tee "--- response: $resp\n";
+  }
+
+  if ($cd ne 200) {
+    printf $tee "--- http post req error, code: $cd\n";
+    printf $tee "--- response: $resp\n";
+    exit;
+  }
+
+  return decode_json($res->content);
+}
+
+sub putRequest() {
+  my $u = shift;
+  my $js = shift;
+  my $r = PUT $u, 'Content-Type' => 'application/json', 'Content' => $js;
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($cd ne 200) {
+    printf $tee "--- http put req error, code: $cd\n";
+    printf $tee "--- response: $resp\n";
+    exit;
+  }
+
+  return decode_json($res->content);
+}
+
+sub patchRequest() {
+  my $u = shift;
+  my $js = shift;
+  my $r = HTTP::Request->new(PATCH => $u);
+  $r->header( 'Content-Type' => 'application/json' );
+  $r->content( $js );
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($cd ne 200) {
+    printf $tee "--- http patch req error, code: $cd\n";
+    printf $tee "--- response: $resp\n";
+    exit;
+  }
+  return decode_json($res->content);
+}
+
+sub deleteRequest() {
+  my $u = shift;
+  my $r = HTTP::Request->new(DELETE => $u);
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($cd ne 200) {
+    if (($cd eq 404) && ($resp =~ /was not found/)){
+      return 2;
+    } else {
+      printf $tee "--- http delete req error, code: $cd\n";
+      printf $tee "--- response: $resp\n";
+      exit;
+    }
+  }
+  return 0
+}
+#
+# Converts Object to string
+#
+sub obj2str() {
+  my $obj = shift;
+  my $ret = "-";
+
+  if (not defined($obj) or $obj eq '') {
+    return $ret;
+  }
+
+  if (ref $obj eq 'ARRAY'){
+    $ret = join("\n", map { &obj2str($_) } @{ $obj });
+  } elsif (ref $obj eq 'HASH'){
+    my @a = qw( { );
+    foreach my $i (sort keys %{ $obj }){
+      # filter common not displayable properties
+      unless ($i =~ /^(selfLink|kind|fullPath|generation)$/) {
+        push @a, $i . ": " . &obj2str( $obj->{$i} );
+      }
+    }
+    push @a, '}';
+    $ret = join("\n", @a);
+  } else {
+    $ret = $obj;
+    $ret =~ tr/[\n\r]//;
+  }
+
+  return $ret;
+}
+#
+# Convert array of Objects to a string
+#
+sub objectarray2string(){
+  my $a = shift;
+  my @ret;
+  foreach my $it ( @{ $a } ){
+    my @hh = qw( { );
+    foreach my $_t (sort keys %{ $it }) {
+      unless ($_t =~ /^(selfLink|kind|fullPath|generation)$/) {
+          push @hh, $_t . ': ' . $it->{ $_t };
+      }
+    }
+    push @hh, '}';
+    push @ret, join( "\n", @hh);
+  }
+  return join( "\n", @ret );
+}
+#
+# follow references and expand them by converting into objects
+#
+sub checkReference(){
+  my $r  = shift;
+  my $ar = [];
+
+  if ($db_cr) { print " debug: checkReference\n"; }
+  foreach my $e ( @{ $$r->{'items'} }){
+    my $z = {};
+    foreach my $p (keys %{ $e } ) {
+      if ($p =~ /^(.+)Reference$/){
+        my $ct = ref $e->{$p};
+        # print "checkReference:  $ct: $p\n";
+        #
+        # since version 12.0 additional references are included in ARRAY for given property such as iRule, vlan, profile
+        #
+        if ($ct eq 'HASH') {
+          my $qe = &query2object( $e->{$p}{'link'}, 'yes');
+          #$z->{$p} = &objectarray2string( $qe->{'items'} );
+          $z->{$p} = $qe->{'items'};
+        }
+      } else {
+        $z->{$p} = $e->{$p};
+      }
+    }
+    push @{ $ar }, $z;
+  }
+  $$r->{'items'} = $ar;
+}
+
+#
+# same as above but for flat type of collections
+#
+sub checkReferenceFlat(){
+  my $r  = shift;
+  my $z = {};
+
+  if ($db_cr) { print " debug: checkReferenceFlat\n"; }
+  foreach my $p (keys %{ $$r } ){
+    if ($p =~ /^(.+)Reference$/){
+      my $ct = ref $$r->{$p};
+      #print " cRF: $p : $ct";
+      if ($ct eq 'HASH') {
+        my $qe = &query2object( $$r->{$p}{'link'}, 'yes');
+        $z->{$p} = &objectarray2string( $qe->{'items'} );
+      }
+    } else {
+      $z->{$p} = $$r->{$p};
+    }
+  }
+  $$r = $z;
+}
+
+sub dumpObject2Array() {
+  my $obj = shift;
+  my $hea = shift || 0;
+  my @a = qw( name );
+
+  if ( ref $obj eq 'HASH' ){
+    foreach my $e (sort keys %{ $obj }) {
+      unless ($e =~ /^(selfLink|kind|name|fullPath|generation)$/) {
+        push @a, $e;
+      }
+    }
+    if ($hea) {
+      return @a;
+    } else {
+      return map { if ($_ eq 'name'){ $obj->{'name'} } else { &obj2str( $obj->{$_} ) } } @a;
+    }
+  }
+  return @a;
+}
+#
+# analyze virtual servers
+#
+sub checkVirtuals {
+  my $vs = &query2object( $URL . 'ltm/virtual' );
+  printf $tee "\n %42s | %8s | %8s | %-40s\n",'name','partition','type','vlan';
+  printf $tee "%s\n", '-' x 98;
+  foreach my $r ( @{ $vs->{'items'} } ) {
+    my $v = $r->{'vlans'};
+    if ( ref $v eq 'ARRAY' ){
+      $v = join ', ', @{ $v };
+    } else {
+      $v = "-empty-";
+    }
+
+    printf $tee " %42s | %8s | %8s | %-40s\n", $r->{'name'}, $r->{'partition'}, $r->{'ipProtocol'}, $v;
+  }
+  printf $tee "%s\n", '-' x 98;
+}
+
+#
+# analyze iRules
+#
+sub checkRules {
+  my $rules = &query2object( $URL . 'ltm/rule');
+  if ($debug_rules) { print Dumper($rules); }
+  my %RR = qw();
+  my $verb = shift || 0;
+  my %irules = qw();
+
+  if ($verb) {
+    printf $tee "\n %42s | %8s | %-40s\n",'name','partition','hash';
+    printf $tee "%s\n", '-' x 98;
+  }
+  foreach my $r ( @{ $rules->{'items'} }) {
+    next if ($r->{'name'} =~ /^_sys_/);
+    my $dg = sha1_hex( $r->{'apiAnonymous'} || '' );
+    my $key = "/" . $r->{'partition'} . "/" . $r->{'name'};
+    if ($verb) { printf $tee " %42s | %8s | %40s\n", $r->{'name'}, $r->{'partition'}, $dg; }
+    $RR{ $key } = 0;
+    $irules{$r->{'name'}} = {
+       hash      => $dg,
+       used      => 0,
+       partition => $r->{'partition'},
+    };
+  }
+
+  my $vss = &query2object( $URL . 'ltm/virtual');
+  if ($verb) {
+    printf $tee "%s\n", '-' x 98;
+    printf $tee "\n %32s | %12s | %-40s\n",'name','partition','list of numbered iRules';
+    printf $tee "%s\n", '-' x 98;
+  }
+  foreach my $r ( @{ $vss->{'items'}}) {
+    my $rl = '';
+    if (defined $r->{'rules'}) {
+      my $fo = 0;
+      foreach my $k ( @{ $r->{'rules'}} ) {
+        if (defined $RR{$k} ) {
+          $RR{$k} = 1;
+          $irules{$k}{used} = 1;
+        }
+        if ($fo == 0){
+          $fo++;
+          if ($verb) { printf $tee " %32s | %12s | [%2d]  %-40s\n", $r->{'name'}, $r->{'partition'}, $fo, $k; }
+        } else {
+          $fo++;
+          if ($verb) { printf $tee " %44s    | [%2d]  %-40s\n", ' ', $fo, $k; }
+        }
+      }
+    } else {
+      if ($verb) { printf $tee " %32s | %12s | %40s\n", $r->{'name'}, $r->{'partition'}, $rl; }
+    }
+  }
+  if ($verb) {
+    printf $tee "%s\n", '-' x 98;
+    printf $tee "\n+ unused iRules:\n";
+    printf $tee "%s\n", '-' x 98;
+    foreach my $k ( sort keys %RR ) {
+      if ($RR{ $k } == 0) { printf $tee "$k\n"; }
+    }
+    printf $tee "%s\n", '-' x 98;
+  }
+  return %irules;
+}
+
+sub saveRunConfig() {
+  my $js = JSON->new;
+  my $z = {
+    command => "save",
+  };
+  $js->pretty();
+  return &postRequest( $URL . 'sys/config', $js->encode( $z ), 'no' );
+}
+
+sub syncCluster() {
+  my $grp = shift;
+  my $js = JSON->new;
+  my $z = {
+    command     => "run",
+    utilCmdArgs => "config-sync to-group $grp",
+  };
+  $js->pretty();
+  return &postRequest( $URL . 'cm', $js->encode( $z ), 'yes' );
+}
+
+sub runGenericCommand(){
+  my $cmd = shift;
+  my $js = JSON->new;
+  my $z = {
+    command     => "run",
+    utilCmdArgs => " -c '$cmd'",
+  };
+  $js->pretty();
+  return &postRequest( $URL . 'util/bash', $js->encode( $z ) );
+}
+
+sub loadMergeFile() {
+  my $fle = shift;
+  my $js = JSON->new;
+  my $z = {
+    command     => "load",
+    utilCmdArgs => "merge file $fle",
+  };
+  $js->pretty();
+  return &postRequest( $URL . 'sys/config', $js->encode( $z ) );
+}
+
+sub createResource() {
+  my ($t, $n, $part, $r, $mds) = @_;
+  my $js = JSON->new;
+  $js->pretty();
+
+  if ($t eq 'rule') {
+    open my $fh, "<", "$r" or die "--- Error opening resource file: $r!\n";
+    read $fh, my $buffer, -s $fh;
+    close $fh;
+    my $z = {
+      name => $n,
+      kind => 'tm:ltm:rule:rulestate',
+      partition => $part,
+      apiAnonymous => $buffer,
+      fullPath => "/" . $part . "/" . $n,
+    };
+    return &postRequest( $URL . 'ltm/rule/', $js->encode( $z ) );
+  }
+
+  if ($t eq 'ifile') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $r = &runGenericCommand( "tmsh create sys file ifile /$part/$n source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while creating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+
+    # create ltm link for an ifile
+    my $z = {
+      name      => $n,
+      kind      => 'tm:ltm:ifile:ifilestate',
+      partition => $part,
+      fullPath  => "/$part/$n",
+      fileName  => "/$part/$n"
+    };
+    my $ck = &existsResource( "ltm/ifile/~$part~$n" );
+    if ($ck) {
+      return $ck;
+    } else {
+      return &postRequest( $URL . 'ltm/ifile/', $js->encode( $z ) );
+    }
+  }
+
+  if ($t eq 'dgroup') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $dgtype = "string";
+    if ($mds eq "ip") { $dgtype = "ip"; }
+    my $r = &runGenericCommand( "tmsh create sys file data-group /$part/$n type $dgtype source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while creating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+
+    # create ltm link for an data-group
+    my $z = {
+      name      => $n,
+      kind      => 'tm:ltm:data-group:external:externalstate',
+      partition => $part,
+      externalFileName => "/$part/$n"
+    };
+    my $ck = &existsResource( "ltm/data-group/external/~$part~$n" );
+    if ($ck) {
+      return $ck;
+    } else {
+      return &postRequest( $URL . 'ltm/data-group/external', $js->encode( $z ) );
+    }
+  }
+
+  if ($t eq 'monitor') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $r = &runGenericCommand( "tmsh create sys file external-monitor /$part/$n source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while creating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+  }
+
+}
+
+sub existsResource {
+  my ($name) = @_;
+  my $r = &query2object( $URL . $name );
+  if (defined $r->{'error'}){
+    return 0;
+  } else {
+    return $r;
+  }
+}
+
+sub updateResource() {
+  my ($t, $n, $part, $r) = @_;
+  my $js = JSON->new;
+  $js->pretty();
+
+  if ($t eq 'rule') {
+    open my $fh, "<", "$r" or die "--- Error opening resource file: $r!\n";
+    read $fh, my $buffer, -s $fh;
+    close $fh;
+    my $z = {
+      apiAnonymous => $buffer,
+    };
+    return &putRequest( $URL . 'ltm/rule/' . $n, $js->encode( $z ) );
+  }
+
+  if ($t eq 'ifile') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $r = &runGenericCommand( "tmsh modify sys file ifile /$part/$n source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while updating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+
+    unless ( &existsResource( "ltm/ifile/~$part~$n" ) ) {
+      print $tee "error ltm ifile missing!";
+      return 0;
+    }
+
+  }
+
+  if ($t eq 'dgroup') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $r = &runGenericCommand( "tmsh modify sys file data-group /$part/$n source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while updating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+
+    unless ( &existsResource( "ltm/data-group/external/~$part~$n" ) ) {
+      print $tee "error ltm dgroup external link is missing!";
+      return 0;
+    }
+  }
+
+  if ($t eq 'monitor') {
+    my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
+    my $k = new CAudit( $host, $usr, $pass );
+    $k->uploadFile( undef, $r, $transname );
+
+    my $r = &runGenericCommand( "tmsh modify sys file external-monitor /$part/$n source-path file://$transname" );
+    if (defined( $r->{'commandResult'})) {
+      print $tee "error while updating resource: " . $r->{'commandResult'};
+      &runGenericCommand( "rm $transname" );
+      exit 1;
+    }
+    &runGenericCommand( "rm $transname" );
+  }
+
+}
+
+sub deleteResource {
+  my ($t, $n) = @_;
+}
+
+sub get_running_software() {
+  my %p;
+  my $r = &query2object( $URL . 'sys/software/volume');
+  foreach my $r ( @{ $r->{'items'} } ) {
+    if ($r->{'active'}) {
+      $p{'active volume'}  = $r->{'name'};
+      $p{'soft version'} = $r->{'version'};
+      $p{'soft build'}   = $r->{'build'};
+    }
+  }
+  return %p;
+}
+
+sub getCwd {
+  my $ret;
+  if ($^O eq "MSWin32") {
+    $ret = `cd`;
+  } else {
+    $ret = `pwd`;
+  }
+  chomp($ret);
+  return $ret;
+}
+
+sub batch_mode {
+  my $fn = shift;
+
+  open my $fh, "<", "$fn" or die "--- Error opening resource file!\n";
+  read $fh, my $buffer, -s $fh;
+  close $fh;
+
+  my $confNo  = 0;
+  my $tmsh_mg = 0;
+  my $file_mg = 0;
+  my $cmd_mg = 0;
+  my $j = decode_json($buffer);
+
+  # options parsing
+  if (defined $j->{'options'}{'working-directory'}){
+    $wDir = $j->{'options'}{'working-directory'};
+    $wDir .= '/';
+  }
+
+  #verify system matches description
+  if (defined ($j->{'system-ip'}) and ($j->{'system-ip'} ne "*")) {
+    if ($host !~ /$j->{'system-ip'}/) {
+      printf $tee "(error) management IP address does not match\n";
+      return;
+    }
+  }
+  my $rsw = $srun{'soft version'} . "." . $srun{'soft build'};
+  if (defined ($j->{'sw-version'}) and ($j->{'sw-version'} ne "*")) {
+    if ($rsw !~ /$j->{'sw-version'}/) {
+      printf $tee "(error) running software: $rsw does not match requested: $j->{'sw-version'}\n";
+      return;
+    }
+  }
+  #print  Dumper( $j );
+
+  if (defined $j->{'description'}) {
+    printf $tee "<batch version=\"%s\" author=\"%s\">\n", $j->{'version'}, $j->{'author'};
+    print  $tee "  batch provided for: $j->{'system'}\n";
+    print  $tee "  description: $j->{'description'}\n";
+    print  $tee "<\\batch>\n";
+  }
+
+  my $pxstep = $j->{'steps'};
+  if (($bstep ne "") and (defined $j->{'stepset'})) {
+    if (defined $j->{'stepset'}{$bstep}) {
+      print $tee "+-- loading step set: $bstep\n";
+      $pxstep = $j->{'stepset'}{$bstep};
+    } else {
+      print $tee "-- failed to find a step set: $bstep\n";
+    }
+  }
+
+  foreach my $step ( @{ $pxstep } ) {
+    # special targets
+    my @otgt = split( ':', $step);
+    my $cindex = 0;
+    my $cabrt = 1;
+    if ($#otgt == 1) {
+      switch ($otgt[0]) {
+        case 'DELAY' {
+          sleep($otgt[1]);
+        }
+        case 'UPSET' {
+          if ((defined $j->{'uploadset'}) && (defined $j->{'uploadset'}{$otgt[1]})) {
+            foreach my $kx ( @{ $j->{'uploadset'}{$otgt[1]} }) {
+              printf $tee "+-- [step: $step] uploading object: $kx\n";
+              if (defined $j->{'options'}{'base_location'}){
+                my $k = new CAudit( $host, $usr, $pass );
+                $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
+              }
+            }
+          }
+        }
+        case 'CSET' {
+          printf $tee "+-- [step: $otgt[0] command set execute: $otgt[1]\n";
+          if ((defined $j->{'commandset'}) && (defined $j->{'commandset'}{$otgt[1]})) {
+            foreach my $kx ( @{ $j->{'commandset'}{$otgt[1]} }) {
+              print $tee "   . executing command: $kx\n";
+              my $r = &runGenericCommand( $kx );
+              if (defined $r->{'commandResult'}){
+                print $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
+              }
+            }
+          }
+        }
+        case 'MSET' {
+          printf $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n";
+          if ((defined $j->{'mergeset'}) && (defined $j->{'mergeset'}{$otgt[1]})) {
+            foreach my $kx ( @{ $j->{'mergeset'}{$otgt[1]} }) {
+              if (defined $j->{'options'}{'base_location'}) {
+                print $tee "   . merging file: $kx\n";
+                my $k = new CAudit( $host, $usr, $pass );
+                $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
+              }
+              my $r = &loadMergeFile( $kx );
+              #printf Dumper($r);
+            }
+          }
+        }
+        default {
+          $cabrt = 0;
+        }
+      }
+      next if $cabrt;
+    }
+    # normal targets
+    switch ($step) {
+      case 'MAKE_UCS' {
+        # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
+        # ucs files created via REST is not available to iControl
+        printf $tee "+-- [step: $step] make system archive\n";
+         #my $js = JSON->new;
+         my $z = {
+           command => "save",
+           name => "migrate-auto-${host_name}-${tmp_stmp}"
+         };
+         if (defined $j->{'options'}{'ucs-file-name'}) {
+           $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
+           printf $tee "+-- setting ucs name to: $z->{'name'}";
+         }
+         #$js->pretty();
+         #&postRequest( $URL . 'sys/ucs', $js->encode( $z ) );
+         my $k = new CAudit( $host, $usr, $pass );
+         $k->createUcs( $z->{name} );
+         printf $tee "  . ucs saved into: $z->{name}\n";
+
+         if ($wDir ne '') {
+            $k->downloadResource('ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
+         } else {
+           printf $tee "+-- note: working dir is not set, we do not download ucs!\n";
+         }
+         if ((defined $j->{'options'}{'remove_created_ucs'}) &&
+             ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
+           # cleanup
+           printf $tee "  . removing ucs we have created\n";
+           $k->deleteUcs( $z->{name} );
+           #&runGenericCommand( "tmsh delete sys ucs $z->{name}");
+         }
+      }
+      case 'LOAD_RULES' {
+         printf $tee "+-- [step: $step] load iRules on a system\n";
+         &load_irules( $j );
+      }
+      case 'UNBIND_VS' {
+         printf $tee "+-- [step: $step] unbind iRules from vs on a system\n";
+         my $z = {
+           rules => []
+         };
+         foreach my $rs ( @{ $j->{'unbindvs'}} ) {
+           my $js = JSON->new;
+           $js->pretty();
+           printf $tee "  . updating virtual server: $rs\n";
+           if (index($rs,"/") > -1){
+             $rs =~ tr/\//~/;
+           }
+           #print Dumper( $z );
+           &putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+         }
+      }
+      case 'REBIND_VS' {
+         printf $tee "+-- [step: $step] rebind iRules on a virtual server\n";
+         my $z = {
+           rules => []
+         };
+         foreach my $rs (sort keys %{ $j->{'virtuals'}}) {
+           my $js = JSON->new;
+           $js->pretty();
+           if (ref($j->{'virtuals'}{$rs}) eq "ARRAY") {
+             $z->{'rules'} = $j->{'virtuals'}{$rs};
+           } else {
+             $z->{'rules'} = $j->{'virtuals'}{$rs}{'rules'};
+             if (defined($j->{'virtuals'}{$rs}{'site'})){
+               my $sk = $j->{'virtuals'}{$rs}{'site'};
+               unless ($host_name =~ /^$sk/) {
+                 next;
+               }
+             }
+           }
+           printf $tee "  . updating virtual server: $rs\n";
+           if (index($rs,"/") > -1){
+             $rs =~ tr/\//~/;
+           }
+           #print Dumper( $z );
+           if ($srun{'soft version'} =~ /^12/) {
+             &patchRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+           } else {
+             &putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+           }
+         }
+      }
+      case 'DELETIONS' {
+         printf $tee "+-- [step: $step] delete specified resources\n";
+         # remove priorities first
+         foreach my $r (sort keys %{ $j->{'delete'} }) {
+           if ($j->{'delete'}{$r}[1] == 1) {
+             my $prt = $j->{delete}{$r}[2] || "Common";
+             printf $tee "  . removing priority object: %-52s  [", "/$prt/$r";
+             if (&deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
+               printf $tee "SUCCESS]\n";
+             } else {
+               printf $tee "FAILED]\n";
+             }
+           }
+         }
+         # remove other items
+         foreach my $r (sort keys %{ $j->{'delete'} }) {
+           if ($j->{'delete'}{$r}[1] != 1) {
+             my $prt = $j->{delete}{$r}[2] || "Common";
+             printf $tee "  . removing normal object: %-52s  [", "/$prt/$r";
+             if (&deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
+               printf $tee "SUCCESS]\n";
+             } else {
+               printf $tee "FAILED]\n";
+             }
+           }
+         }
+         # done
+      }
+      case 'RECERT' {
+        printf $tee "+-- [step: $step] recertify iRules\n";
+        my $crt = $j->{'options'}{'signing_key'};
+        printf $tee "+-- using key: $crt\n";
+        foreach my $r (sort keys %{ $j->{'rules'} }) {
+          printf $tee "  . processing iRule: $r\n";
+          my $js = JSON->new;
+          my $z = {
+            command => 'generate',
+            name    => $r,
+            options => [
+              {
+                 signature => $r,
+              }
+            ],
+            'signing-key' => $crt
+          };
+          $js->pretty();
+          &postRequest( $URL . "ltm/rule", $js->encode( $z ));
+        }
+      }
+      case 'RENAME' {
+        printf $tee "+-- [step: $step] renaming objects\n";
+        foreach my $rc (sort keys %{ $j->{'rename'} }) {
+          printf $tee "  . renaming $rc --> $j->{rename}{$rc}\n";
+          my $js = JSON->new;
+          my $z = {
+            command => 'mv',
+            name    => $rc,
+            target  => $j->{'rename'}{$rc},
+          };
+          $js->pretty();
+          &postRequest( $URL . "ltm/virtual", $js->encode( $z ));
+        }
+      }
+      case 'ABORT' {
+        printf $tee "+-- [step: $step] aborting batch\n";
+        exit;
+      }
+      case 'VERIFY' {
+        printf $tee "+-- [step: $step] verifying batch feasibility\n";
+        printf $tee "  . veryfying existence of objects: vs\n";
+        my %oDone = qw||;
+        #
+        # bind rules (only virtuals)
+        foreach my $ob (sort keys %{ $j->{virtuals} }) {
+          if (defined $j->{rename}) {
+            foreach my $rn (sort keys %{ $j->{rename} }) {
+              if ($j->{rename}{$rn} eq $ob){
+                $ob = $rn;
+                last;
+              }
+            }
+          }
+          print "   -> $ob    ";
+          if (index($ob,"/") > -1){
+            $ob =~ tr/\//~/;
+          }
+          if (&query2object( $URL . "ltm/virtual/" . $ob) == 2){
+             printf $tee  "\[FAILED]\n -- ABORTED -- \n";
+             exit;
+           } else {
+             printf $tee "\[SUCESS]\n";
+             $oDone{$ob} = 1;
+           }
+        }
+        #
+        # unbinding rules
+        foreach my $ob (@{ $j->{unbindvs} }) {
+          if (not defined $oDone{$ob}) {
+            printf $tee "   -> $ob    ";
+            if (index($ob,"/") > -1){
+              $ob =~ tr/\//~/;
+            }
+            if (&query2object( $URL . "ltm/virtual/" . $ob) == 2){
+               printf $tee  "\[FAILED]\n -- ABORTED --\n";
+               exit;
+             } else {
+               printf $tee "\[SUCESS]\n";
+             }
+          }
+        }
+        #
+        # deleted objects
+        printf $tee "  . looking for deleted objects \n";
+        foreach my $ob (sort keys %{ $j->{delete} }) {
+           printf $tee "   -> $ob    ";
+           my $prt = $j->{delete}{$ob}[2] || "Common";
+           if (&query2object( $URL . $j->{delete}{$ob}[0] . "/~$prt~" . $ob) == 2){
+             printf $tee "\[NOT FOUND]\n -- ABORTED -- \n";
+             exit;
+           } else {
+             printf $tee "\[SUCESS]\n";
+           }
+        }
+      }
+      case 'CONFIRM' {
+         if (defined $j->{'confirm-msg'}) {
+           if ($cindex) {
+             printf $tee ">>>>> $j->{'confirm-msg'}[$cindex - 1]";
+           } else {
+             printf $tee ">>>>> $j->{'confirm-msg'}[$confNo]";
+             $confNo++;
+           }
+         } else {
+           printf $tee ">>>>> Please confirm to proceed ....";
+         }
+         readline;
+      }
+      case 'SAVE' {
+        printf $tee "+-- [step: $step] saving running configuration\n";
+        &saveRunConfig;
+      }
+      case 'SYNC' {
+        printf $tee "+-- [step: $step] syncing cluster configuration\n";
+        if (defined $props{'failover cluster'}) {
+          printf $tee "  . synchronizing configuration of the cluster: $props{'failover cluster'}...\n";
+          &syncCluster( $props{'failover cluster'} );
+        }
+      }
+      case 'LOADTMSH' {
+        if (defined $j->{'tmsh-merge'}) {
+          printf $tee "+-- [step: $step] merging tmsh config file: $j->{'tmsh-merge'}[$tmsh_mg]\n";
+          if (defined $j->{'options'}{'base_location'}){
+            my $k = new CAudit( $host, $usr, $pass );
+            $k->uploadFile( $j->{'options'}, &parseFileToken($j->{'tmsh-merge'}[$tmsh_mg]), $j->{'tmsh-merge'}[$tmsh_mg] );
+          }
+          my $r = &loadMergeFile( $j->{'tmsh-merge'}[$tmsh_mg] );
+          #printf Dumper($r);
+          $tmsh_mg++;
+        }
+      }
+      case 'UPLOAD' {
+        if (defined $j->{'upload'}) {
+          printf $tee "+-- [step: $step] uploading object: $j->{'upload'}[$file_mg]\n";
+          if (defined $j->{'options'}{'base_location'}){
+            my $k = new CAudit( $host, $usr, $pass );
+            $k->uploadFile( $j->{'options'}, &parseFileToken($j->{'upload'}[$file_mg]), $j->{'upload'}[$file_mg] );
+          }
+          $file_mg++;
+        }
+      }
+      case 'COMMAND' {
+        if (defined $j->{'command'}) {
+          printf $tee "+-- [step: $step] execute command: $j->{'command'}[$cmd_mg]\n";
+          my $r = &runGenericCommand( $j->{'command'}[$cmd_mg] );
+          if (defined $r->{'commandResult'}){
+            printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
+          }
+          $cmd_mg++;
+        }
+      }
+      case 'LOAD_IFILES' {
+        if ( (defined $j->{'ifile'}) && (defined $j->{'options'}{'base_location'}) ) {
+          printf $tee "+-- [step: $step] uploading ifiles\n";
+          foreach my $fl (sort keys %{ $j->{'ifile'} }) {
+            printf $tee "  ifile: $fl\n";
+            my $pa = 'Common';
+            if (defined $j->{'ifile'}{$fl}{'partition'}) {
+              $pa = $j->{'ifile'}{$fl}{'partition'};
+            }
+            if (&existsResource( "sys/file/ifile/~$pa~$fl")) {
+              &updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'});
+            } else {
+              &createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'}, '');
+            }
+          }
+        }
+      }
+      case 'LOAD_DG' {
+        if ( (defined $j->{'datagroup'}) && (defined $j->{'options'}{'base_location'}) ) {
+          printf $tee "+-- [step: $step] uploading external data groups\n";
+          foreach my $fl (sort keys %{ $j->{'datagroup'} }) {
+            printf $tee "  datagroup: $fl\n";
+            my $pa = 'Common';
+            my $tp = "string";
+            if (defined $j->{'datagroup'}{$fl}{'partition'}) {
+              $pa = $j->{'datagroup'}{$fl}{'partition'};
+            }
+            if (defined $j->{'datagroup'}{$fl}{'type'}) {
+              $tp = $j->{'datagroup'}{$fl}{'type'};
+            }
+            if (&existsResource( "sys/file/data-group/~$pa~$fl")) {
+              &updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'});
+            } else {
+              &createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'}, $tp);
+            }
+          }
+        }
+      }
+      case 'LOAD_MONITORS' {
+        if ( (defined $j->{'monitor'}) && (defined $j->{'options'}{'base_location'}) ) {
+          printf $tee "+-- [step: $step] uploading external monitors\n";
+          foreach my $fl (sort keys %{ $j->{'monitor'} }) {
+            printf $tee "  external monitor: $fl\n";
+            my $pa = 'Common';
+            if (defined $j->{'monitor'}{$fl}{'partition'}) {
+              $pa = $j->{'monitor'}{$fl}{'partition'};
+            }
+            if (&existsResource( "sys/file/external-monitor/~$pa~$fl")) {
+              &updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'});
+            } else {
+              &createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'}, '');
+            }
+          }
+        }
+      }
+      case 'DOWNLOAD' {
+        if ( (defined $j->{'retrieve'}) && (defined $j->{'options'}{'store_location'}) ) {
+          printf $tee "+-- [step: $step] fetching files from remote system\n";
+          foreach my $fl (sort keys %{ $j->{'retrieve'} }) {
+            printf $tee "  . resource from a location: $j->{'retrieve'}{$fl}\n";
+            my $k = new CAudit( $host, $usr, $pass );
+            $k->downloadResource( 'file', $j->{'retrieve'}{$fl}, $j->{'options'}{'store_location'} . '/' . $fl );
+          }
+        }
+      }
+    } # SWITCH
+  }
+}
+sub parseFileToken
+{
+  my @fn = split( '/', shift );
+  return $fn[$#fn];
+}
+
+sub load_irules
+{
+  my $c = shift;
+  my %rls = &checkRules;
+  my @rs;
+
+  # load file into buffer
+  foreach my $rl (sort keys %{ $c->{'rules'} }) {
+    if (defined $c->{'rules'}{$rl}{'priority'}) {
+      push @rs, $rl;
+    }
+  }
+  foreach my $rl (sort keys %{ $c->{'rules'} }) {
+    if (not defined $c->{'rules'}{$rl}{'priority'}) {
+      push @rs, $rl;
+    }
+  }
+
+  foreach my $rl ( @rs ) {
+    my $fhss = "$c->{'options'}{rules_location}/$rl.tcl";
+    if (defined $rls{$rl}) {
+      printf $tee "  . updating rule: $rl\n";
+      &updateResource('rule', $rl, 'Common', $fhss);
+    } else {
+      printf $tee "  . installing rule: $rl\n";
+      &createResource('rule', $rl, 'Common', $fhss, '');
+    }
+  }
+}
+
+# Reports
+
+#
+# ISTATS generic report
+sub report_istats_generic
+{
+  my $r = &runGenericCommand("istats dump");
+  if (defined( $r->{'commandResult'})) {
+    printf $tee "+-- Report::Istats\n";
+    printf $tee '-'x 90 . "\n";
+    printf $tee " %12s | %12s | %32s | %-20s\n",'Module','Range','Variable', 'Value';
+    printf $tee '-'x 90 . "\n";
+    foreach my $ln ( split "\n", $r->{commandResult} ) {
+      if ($ln =~ /^\s+\[\s*?(.+?)\s*?\]\[\s*?(.+?)\s*?\] = (.+?) .*/) {
+        my ($code,$scope) = split('=', $1);
+        my $var = $2;
+        my $val = $3;
+        printf $tee " %12s | %12s | %32s | %-20s\n",$code,$scope,$var,$val;
+      }
+    }
+    printf $tee '-'x 90 . "\n";
+  } else {
+    printf $tee "-- report failed.\n"
+  }
+}
+#
+# string trimming
+sub ctrim
+{
+  my $str = shift;
+  chomp($str);
+  $str =~ s/[,;]//g;
+  $str =~ s/^\s+|\s+$//g;
+  return $str;
+}
+#
+# compare iRules on the Box vs a baseline
+# uses a baseline option
+sub report_irules
+{
+   if ($popts->get('base') eq '') {
+     printf $tee "-- cannot compare iRule without a baseline directory <base>\n";
+     return;
+   }
+
+   opendir my $dir, $popts->get('base') or die "Cannot open directory: $!";
+   my @files = grep { /^.+?\.tcl$/ } readdir $dir;
+   closedir $dir;
+
+   my $rules = &query2object( $URL . 'ltm/rule');
+   my %failed = qw||;
+
+   printf $tee " %50s\tStatus\n", "Rule name";
+   printf $tee '-' x 70 . "\n";
+
+   foreach my $f (sort @files) {
+
+     open my $fh, "<", $popts->get('base') . "/$f" or die "--- Error opening resource file $f!\n";
+     read $fh, my $buffer, -s $fh;
+     close $fh;
+     my $oh = sha1_hex( $buffer );
+
+     $f =~ s/.tcl//;
+     printf $tee " %50s", $f;
+
+     foreach my $r ( @{ $rules->{'items'} } )
+     {
+        if ($r->{'name'} eq $f) {
+          my $ih = sha1_hex( $r->{'apiAnonymous'} );
+          if ($oh ne $ih) {
+            if ($^O eq "MSWin32") {
+              printf $tee "\t[FAIL] %d %d\n", length($buffer) , length($r->{'apiAnonymous'});
+            } else {
+              printf $tee "\t[\033[31mFAIL\033[0m] %d %d\n", length($buffer) , length($r->{'apiAnonymous'});
+            }
+            # my $df = diff \$r->{'apiAnonymous'}, \$buffer, { STYLE => "Unified" };
+            # compare changes over time over the base
+            my $df = diff \$buffer, \$r->{'apiAnonymous'}, { STYLE => "Unified" };
+            $failed{$f} = $df;
+          } else {
+            printf $tee "\t[OK] \n";
+          }
+          last;
+        }
+     }
+
+   }
+   printf $tee '-' x 70 . "\n";
+   if ($popts->get('diff') eq "true") {
+     foreach my $d (sort keys %failed) {
+       if ($^O eq "MSWin32") {
+         printf $tee "--- [$d]:\n";
+       } else {
+         printf $tee "\033[32m--- [$d]:\033[0m\n";
+       }
+       my @lines = split /[\n]/, $failed{$d};
+       foreach my $l (@lines) {
+         if ($l =~ /^\-/) {
+           printf $tee $l . "\n";
+         } elsif ($l =~ /^\@\@/) {
+           if ($^O eq "MSWin32") {
+             printf $tee "$l\n";
+           } else {
+             printf $tee "\033[35m$l\033[0m\n";
+           }
+         } else {
+           if ($^O eq "MSWin32") {
+             printf $tee "$l\n";
+           } else {
+             printf $tee "\033[33m$l\033[0m\n";
+           }
+         }
+       }
+     }
+   }
+}
+# EOF

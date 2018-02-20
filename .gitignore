@@ -1,0 +1,4 @@
+.*.swp
+*~
+logfiles/
+cfg/.ccache.json
