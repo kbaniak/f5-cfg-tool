@@ -12,6 +12,9 @@
 
 use strict;
 
+# remember from where we are called
+my $rundir = $ENV{PWD};
+
 BEGIN {
   use Cwd;
   use File::Basename;
@@ -21,7 +24,7 @@ BEGIN {
   }
   chdir($__base) || die ". cannot chdir into $__base";
   push (@INC, "./lib");
-  printf ". running from dir: %s\n", getcwd();
+  printf ". runtime location: %s\n", getcwd();
 }
 
 use Switch;
@@ -1059,7 +1062,12 @@ sub getCwd {
 sub batch_mode {
   my $fn = shift;
 
-  open my $fh, "<", "$fn" or die "--- Error opening resource file!\n";
+  if (index($fn, "/") < 0) {
+    # try local directory as path is not absolute
+    $fn = "$rundir/$fn";
+  }
+
+  open my $fh, "<", "$fn" or die "--- Error opening resource file: $fn!\n";
   read $fh, my $buffer, -s $fh;
   close $fh;
 
@@ -1070,9 +1078,19 @@ sub batch_mode {
   my $j = decode_json($buffer);
 
   # options parsing
-  if (defined $j->{'options'}{'working-directory'}){
+  if (defined $j->{'options'}{'working-directory'}) {
     $wDir = $j->{'options'}{'working-directory'};
     $wDir .= '/';
+    if ($wDir eq "./") {
+      $wDir = $rundir . "/";
+    }
+  }
+
+  # base location fixup for relative paths
+  if (defined $j->{'options'}{'base_location'}) {
+    if ($j->{'options'}{'base_location'} eq ".") {
+      $j->{'options'}{'base_location'} = $rundir;
+    }
   }
 
   #verify system matches description
