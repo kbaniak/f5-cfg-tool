@@ -4,8 +4,9 @@ F5 RESTful provisioning tool
 Developped in perl script language.
 
 ## Installation
-Firt, clone the repository on your computer. Afterwards, follow the procedure:
+First, clone the repository on your computer. Afterwards, follow the procedure:
 ```
+git clone https://github.com/kbaniak/f5-cfg-tool
 cd f5-cfg-tool
 ./f5-cfg -h
 ```
@@ -13,7 +14,7 @@ cd f5-cfg-tool
 ## Examples
 ### Inspect F5 device manifest and print list of iRules
 ```
-./f5-cfg -t 1.1.1.1 -u admin -p admin -i -k 
+./f5-cfg -t 1.1.1.1 -u admin -p admin -i -k
 ```
 ### Provision F5 device using procedure specified in a batch file
 ```
@@ -44,6 +45,5 @@ MIME::Base64
 
 Fedora Linux system users may use dnf to install the dependencies:
 ```
-dnf install perl-IO-Tee perl-SOAP-Lite perl-Getopt-Simple perl-Digest-SHA perl-TermReadKey
-dnf install perl-LWP-Determined perl-HTTP-Request-Params perl-Data-Dumper perl-Text-Diff perl-MIME-Base64
+dnf install perl-JSON perl-Switch perl-IO-Tee perl-SOAP-Lite perl-Getopt-Simple perl-Digest-SHA perl-TermReadKey perl-HTTP-Request-Params perl-Data-Dumper perl-Text-Diff perl-MIME-Base64
 ```
