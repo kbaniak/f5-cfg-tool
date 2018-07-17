@@ -18,13 +18,14 @@ my $rundir = $ENV{PWD};
 BEGIN {
   use Cwd;
   use File::Basename;
+  $rundir = qx{pwd};
   my $__base = dirname(__FILE__);
   if ( -l __FILE__) {
     $__base = dirname(readlink(__FILE__));
   }
   chdir($__base) || die ". cannot chdir into $__base";
   push (@INC, "./lib");
-  printf ". runtime location: %s\n", getcwd();
+  printf ". runtime location: %s, rundir: %s\n", getcwd(), $rundir;
 }
 
 use Switch;
@@ -44,7 +45,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.1';
+my $version = '1.0.2';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -1062,7 +1063,7 @@ sub getCwd {
 sub batch_mode {
   my $fn = shift;
 
-  if (index($fn, "/") < 0) {
+  if (index($fn, "/") < 0 or substr($fn,0,2) eq "./") {
     # try local directory as path is not absolute
     $fn = "$rundir/$fn";
   }
@@ -1086,10 +1087,17 @@ sub batch_mode {
     }
   }
 
+  # iRules location pathing
+  if (defined $j->{'options'}{'rules_location'}) {
+    if (substr($j->{'options'}{'rules_location'},0,2) eq "./") {
+      $j->{'options'}{'rules_location'} = $rundir . substr($j->{'options'}{'rules_location'},1);
+    }
+  }
+
   # base location fixup for relative paths
   if (defined $j->{'options'}{'base_location'}) {
-    if ($j->{'options'}{'base_location'} eq ".") {
-      $j->{'options'}{'base_location'} = $rundir;
+    if (substr($j->{'options'}{'base_location'},0,2) eq "./") {
+      $j->{'options'}{'base_location'} = $rundir . substr($j->{'options'}{'base_location'},1);
     }
   }
 
