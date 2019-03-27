@@ -43,6 +43,10 @@ my $BDEFS = {
   "LOAD_MONITORS"  => { usage => "load external [ Hash(monitors) of { source } ]" },
   "LOAD_DG"        => { usage => "load data groups type external: [ Hash(datagroup) of { source } ]" },
   "DOWNLOAD"       => { usage => "download file from remote system" },
+  "CSET:name"      => { usage => "command set reference, name indicated named command set to be invoked" },
+  "MSET:name"      => { usage => "merge set reference, name indicates named mereg set to be invoked" },
+  "DELAY:seconds"  => { usage => "wait seconds before continuing" },
+  "UPSET:name"     => { usage => "upload set of files denoted by a name" },
 };
 
 my $BOPT_DEFS = {

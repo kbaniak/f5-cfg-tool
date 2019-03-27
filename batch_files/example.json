@@ -1,0 +1,72 @@
+{
+  "system":      "*",
+  "system-ip":   "10.10.200.10*",
+  "sw-version":  "12.1.2.*",
+  "description": "Procedure set template for f5-cfg",
+  "version":     "1.1",
+  "author":      "Krystian Baniak",
+  "steps": [ "SAVE" ],
+  "stepset" : {
+     "full":    [ "LOAD_IFILES", "LOADTMSH", "LOAD_RULES", "LOADTMSH", "LOADTMSH", "LOADTMSH", "LOADTMSH", "SAVE" ],
+     "host_1":  [ "MSET:host_1", "DELAY:45", "UPSET:host_1", "CSET:host_1" ],
+     "icall":   [ "MSET:icall", "SAVE" ],
+     "sys":     [ "MSET:sys", "SAVE" ],
+     "snmp":    [ "UPSET:snmp", "CSET:snmp", "SAVE" ]
+  },
+  "tmsh-merge" : [
+    "/shared/tmp/ltm_pre_irules.txt",
+    "/shared/tmp/ltm_config_worker.txt",
+    "/shared/tmp/icall_scripts_worker.txt",
+    "/shared/tmp/worker-sys-db.txt"
+  ],
+  "mergeset": {
+    "icall": [
+      "/shared/tmp/icall_scripts_worker.txt"
+    ],
+    "sys": [ "/shared/tmp/sys_base_worker.txt" ],
+    "host_1": [
+      "/shared/tmp/base_net_worker_cp1.txt",
+      "/shared/tmp/host_net_self.txt",
+      "/shared/tmp/virtual_address_worker_cp1.txt"
+    ]
+  },
+  "uploadset": {
+    "snmp": [ "/config/snmp/custom_mib.tcl" ],
+    "host_1": [
+      "/shared/tmp/cp01_zebos_rd0.txt",
+      "/shared/tmp/cp01_zebos_rd11.txt",
+      "/shared/tmp/cp01_zebos_rd12.txt"
+    ]
+  },
+  "confirm-msg": [
+    "Please confirm to synchronize the cluster"
+  ],
+  "command": [
+  ],
+  "commandset": {
+     "snmp": [ "clsh bigstart restart snmpd" ],
+     "host_1": [
+       "imish -r0 -f /shared/tmp/cp01_zebos_rd0.txt",
+       "imish -r11 -f /shared/tmp/cp01_zebos_rd11.txt",
+       "imish -r12 -f /shared/tmp/cp01_zebos_rd12.txt",
+       "imish -r0 -e wr",
+       "imish -r11 -e wr",
+       "imish -r12 -e wr"
+     ]
+  },
+  "ifile": {
+    "org-bottom-hand": { "source": "ifiles/bottom-hand.png" },
+    "org-bottom-hand-medium": { "source": "ifiles/bottom-hand-medium.png" }
+  },
+  "rules": {
+    "Gi_Handler_DNS_v.1.0": {},
+    "Gi_Handler_HTTP_v.1.0": {},
+    "o_reslib": { "priority": 1 }
+  },
+  "options": {
+    "rules_location":    "./directory_with_irules",
+    "working-directory": "./",
+    "base_location":     "./location_of_files",
+    "search_path":       [ "additional_search_directory" ]
+  }
+}

@@ -45,7 +45,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.2';
+my $version = '1.0.3';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -59,7 +59,7 @@ our ( %opts );
 getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:Z:P:', \%opts);
 
 unless ($opts{'Q'}) {
-  print("(C) 2018, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
+  print("(C) 2019, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
 }
 #-------------------------------------------------
 # advanced options parser
@@ -1090,14 +1090,14 @@ sub batch_mode {
   # iRules location pathing
   if (defined $j->{'options'}{'rules_location'}) {
     if (substr($j->{'options'}{'rules_location'},0,2) eq "./") {
-      $j->{'options'}{'rules_location'} = $rundir . substr($j->{'options'}{'rules_location'},1);
+      substr($j->{'options'}{'rules_location'}, 0, 1) = $rundir;
     }
   }
 
   # base location fixup for relative paths
   if (defined $j->{'options'}{'base_location'}) {
-    if (substr($j->{'options'}{'base_location'},0,2) eq "./") {
-      $j->{'options'}{'base_location'} = $rundir . substr($j->{'options'}{'base_location'},1);
+    if ($j->{'options'}{'base_location'} eq "./") {
+      $j->{'options'}{'base_location'} = $rundir;
     }
   }
 
