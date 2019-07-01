@@ -18,6 +18,7 @@ sub new
     _host  => shift,
     _user  => shift,
     _pass  => shift,
+    _port  => shift,
   };
   bless $self, $class;
   return $self;
@@ -36,7 +37,7 @@ sub getVersion
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/SystemInfo')
     -> readable(1)
-    -> proxy("https://$self->{'_host'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(
@@ -54,7 +55,7 @@ sub createUcs
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
     -> readable(1)
-    -> proxy("https://$self->{'_host'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(
@@ -77,7 +78,7 @@ sub deleteUcs
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
     -> readable(1)
-    -> proxy("https://$self->{'_host'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(
@@ -99,7 +100,7 @@ sub downloadResource
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
     -> readable(1)
-    -> proxy("https://$self->{'_host'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(
@@ -168,15 +169,21 @@ sub uploadFile
   my $preferred_chunk_size = 65536/2;
   my $chunk_size = 65536/2;
   my $total_bytes = 0;
+  my $prefix = "";
 
   my $localFile = $fname;
   if (defined($opts)) {
     if (defined($opts->{"base_location"})) {
       $localFile = $opts->{"base_location"} . "/" . $fname;
-      if (!(-e $localFile) && defined($opts->{"search_path"})){
-        #
-        # TODO: cycle through search locations, so far only first item from the list
-        $localFile = $opts->{"base_location"} . "/" . $opts->{"search_path"}[0] . "/" . $fname;
+      if ($opts && $opts->{"rundir"}) {
+        $prefix = $opts->{"rundir"};
+      }
+      if (! -e $prefix . "/" . $localFile) {
+        if (defined($opts->{"search_path"})) {
+          #
+          # TODO: cycle through search locations, so far only first item from the list
+          $localFile = $opts->{"base_location"} . "/" . $opts->{"search_path"}[0] . "/" . $fname;
+        }
       }
     }
   }
@@ -185,14 +192,14 @@ sub uploadFile
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
     -> readable(1)
-    -> proxy("https://$self->{'_host'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(
     'Authorization' => 'Basic ' . MIME::Base64::encode("$self->{'_user'}:$self->{'_pass'}", '')
   );
 
-  open(FH, "<$localFile") or die("Can't open $localFile for input: $!");
+  open(FH, "< $prefix" . "/" . "$localFile") or die("Can't open $localFile for input: $!");
   binmode(FH);
 
   while ($bContinue) {
