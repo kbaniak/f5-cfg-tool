@@ -71,9 +71,9 @@ sub createUcs
 
 }
 
-sub deleteUcs
+sub deleteResource
 {
-  my ($self, $name) = @_;
+  my ($self, $name, $type) = @_;
 
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
@@ -85,10 +85,14 @@ sub deleteUcs
     'Authorization' => 'Basic ' . MIME::Base64::encode("$self->{'_user'}:$self->{'_pass'}", '')
   );
 
-  my $soapResponse = $icHandle->delete_configuration
-  (
-    SOAP::Data->name( 'filename'  => $name ),
-  );
+  my $soapResponse; 
+  
+  if ($type eq 'ucs') {
+    $soapResponse = $icHandle->delete_configuration ( SOAP::Data->name( 'filename'  => $name ) );
+  } else {
+    $soapResponse = $icHandle->delete_file ( SOAP::Data->name( 'filename'  => $name ) );
+  }
+
   return $soapResponse->result;
 
 }

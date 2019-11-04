@@ -11,6 +11,7 @@
 #
 
 use strict;
+use warnings;
 
 # remember from where we are called
 my $rundir = $ENV{PWD};
@@ -45,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.4';
+my $version = '1.0.5';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -377,9 +378,9 @@ if ( $opts{'A'} ) {
   close($fh);
 
   if ($^O eq "MSWin32") {
-    `tar -cf $wDir$d.tar $d/`;
+    `tar -cf $rundir/$wDir$d.tar $d/`;
   } else {
-    `tar -cf $wDir$d.tar $d/`;
+    `tar -cf $rundir/$wDir$d.tar $d/`;
   }
   if ($remove_temp) {
     printf $tee "... trying to remove directory";
@@ -1085,16 +1086,10 @@ sub batch_mode {
   # options parsing
   if (defined $j->{'options'}{'working-directory'}) {
     $wDir = $j->{'options'}{'working-directory'};
-    $wDir .= '/';
     if ($wDir eq "./") {
       $wDir = $rundir . "/";
-    }
-  }
-
-  # iRules location pathing
-  if (defined $j->{'options'}{'rules_location'}) {
-    if (substr($j->{'options'}{'rules_location'},0,2) eq "./") {
-      substr($j->{'options'}{'rules_location'}, 0, 1) = $rundir;
+    } else {
+      $wDir .= '/';
     }
   }
 
@@ -1102,6 +1097,13 @@ sub batch_mode {
   if (defined $j->{'options'}{'base_location'}) {
     if ($j->{'options'}{'base_location'} eq "./") {
       $j->{'options'}{'base_location'} = $rundir;
+    }
+  }
+
+  # iRules location pathing
+  if (defined $j->{'options'}{'rules_location'}) {
+    if (substr($j->{'options'}{'rules_location'}, 0, 2) eq "./") {
+      substr($j->{'options'}{'rules_location'}, 0, 1) = $rundir;
     }
   }
 
@@ -1151,10 +1153,18 @@ sub batch_mode {
         case 'UPSET' {
           if ((defined $j->{'uploadset'}) && (defined $j->{'uploadset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'uploadset'}{$otgt[1]} }) {
-              printf $tee "+-- [step: $step] uploading object: $kx\n";
+              my $ksrc;
+              if (index($kx,'|')>=0) {
+                my @at = split('|', $kx);
+                $kx = $at[0];
+                $ksrc = $at[1];
+              } else {
+                $ksrc = &parseFileToken($kx);
+              }
+              printf $tee "+-- [step: $step] uploading object: $kx from $ksrc\n";
               if (defined $j->{'options'}{'base_location'}){
                 my $k = new CAudit( $host, $usr, $pass, $cport );
-                $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
+                $k->uploadFile( $j->{'options'}, $ksrc, $kx );
               }
             }
           }
@@ -1193,6 +1203,10 @@ sub batch_mode {
     }
     # normal targets
     switch ($step) {
+      case 'COMPARE_RULES' {
+        printf $tee "+-- [step: $step] comparing irule codebase\n";
+        &report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j);
+      }
       case 'MAKE_UCS' {
         # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
         # ucs files created via REST is not available to iControl
@@ -1221,8 +1235,40 @@ sub batch_mode {
              ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
            # cleanup
            printf $tee "  . removing ucs we have created\n";
-           $k->deleteUcs( $z->{name} );
+           $k->deleteResource( $z->{name}, 'ucs' );
            #&runGenericCommand( "tmsh delete sys ucs $z->{name}");
+         }
+      }
+      case 'MAKE_SCF' {
+        printf $tee "+-- [step: $step] make system scf archive\n";
+         my $js = JSON->new;
+         my $fname = "migrate-auto-${host_name}-${tmp_stmp}.scf";
+         my $z = {
+           command => "save",
+           options => [
+             {
+               file            => $fname,
+               "no-passphrase" => ""
+             }
+           ]
+         };
+
+         $js->pretty();
+         my $res = &postRequest( $URL . 'sys/config', $js->encode( $z ) );
+         printf $tee ":: saving files to: $wDir\n";
+
+         my $k = new CAudit( $host, $usr, $pass, $cport );
+         if ($wDir ne '') {
+            $k->downloadResource('file', "/var/local/scf/" . $fname, $wDir . $fname );
+            $k->downloadResource('file', "/var/local/scf/" . $fname . ".tar", $wDir . $fname . ".tar" );
+         } else {
+           printf $tee "+-- note: working dir is not set, we do not download scf!\n";
+         }
+         if ((defined $j->{'options'}{'remove_created_ucs'}) && ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
+           # cleanup
+           printf $tee "  . removing scf files we have created\n";
+           $k->deleteResource( "/var/local/scf/" . $fname, 'file');
+           $k->deleteResource( "/var/local/scf/" . $fname . ".tar", 'file' );
          }
       }
       case 'LOAD_RULES' {
@@ -1600,12 +1646,20 @@ sub ctrim
 # uses a baseline option
 sub report_irules
 {
-   if ($popts->get('base') eq '') {
+   my ($base, $diff, $j) = @_;
+   
+   if ($base eq '') {
      printf $tee "-- cannot compare iRule without a baseline directory <base>\n";
      return;
    }
 
-   opendir my $dir, $popts->get('base') or die "Cannot open directory: $!";
+   my $nset = 0;
+   my $ndir = 0;
+   my $ngod = 0;
+   my $nmis = 0;
+   my $ndif = 0;
+
+   opendir my $dir, $base or die "Cannot open directory: $!";
    my @files = grep { /^.+?\.tcl$/ } readdir $dir;
    closedir $dir;
 
@@ -1613,21 +1667,37 @@ sub report_irules
    my %failed = qw||;
 
    printf $tee " %50s\tStatus\n", "Rule name";
-   printf $tee '-' x 70 . "\n";
+   printf $tee '-' x 100 . "\n";
+
+   $ndir = $#files;
 
    foreach my $f (sort @files) {
 
-     open my $fh, "<", $popts->get('base') . "/$f" or die "--- Error opening resource file $f!\n";
+     if ($j->{'rules'}){
+       $nset = scalar keys %{ $j->{'rules'} };
+       my $la = $f;
+       $la =~ s/.tcl//;
+       if (! grep { /$la/ } keys %{$j->{'rules'}}) {
+         printf $tee " %50s\t[\033[33mSKIP\033[0m]\n", $f;
+         next;
+       }
+     }
+
+     open my $fh, "<", $base . "/$f" or die "--- Error opening resource file $f!\n";
      read $fh, my $buffer, -s $fh;
      close $fh;
+     # remove newline
+     chomp($buffer); 
      my $oh = sha1_hex( $buffer );
 
      $f =~ s/.tcl//;
      printf $tee " %50s", $f;
 
+     my $found = 0;
      foreach my $r ( @{ $rules->{'items'} } )
      {
         if ($r->{'name'} eq $f) {
+          $found = 1;
           my $ih = sha1_hex( $r->{'apiAnonymous'} );
           if ($oh ne $ih) {
             if ($^O eq "MSWin32") {
@@ -1639,37 +1709,48 @@ sub report_irules
             # compare changes over time over the base
             my $df = diff \$buffer, \$r->{'apiAnonymous'}, { STYLE => "Unified" };
             $failed{$f} = $df;
+            $ndif++;
           } else {
-            printf $tee "\t[OK] \n";
+            print $tee "\t[\033[32mOK\033[0m] \n";
+            $ngod++;
           }
           last;
         }
      }
+     if (! $found) {
+       print $tee "\t[\033[34mMISS\033[0m] \n";
+       $nmis++;
+     }
 
    }
-   printf $tee '-' x 70 . "\n";
-   if ($popts->get('diff') eq "true") {
+   printf $tee '-' x 100 . "\n";
+   printf $tee ". irules found in reference directory:    %d\n", $ndir;
+   printf $tee ". irules declared in a batch and checked: %d\n", $nset if $nset > 0;
+   printf $tee ". stats: OK: %d, DIFF: %d, MISS: %d \n", $ngod, $ndif, $nmis;
+   printf $tee '-' x 100 . "\n";
+
+   if ($diff eq "true") {
      foreach my $d (sort keys %failed) {
        if ($^O eq "MSWin32") {
-         printf $tee "--- [$d]:\n";
+         printf $tee "--- [%s]:\n", $d;
        } else {
-         printf $tee "\033[32m--- [$d]:\033[0m\n";
+         printf $tee "\033[32m--- [%s]:\033[0m\n", $d;
        }
        my @lines = split /[\n]/, $failed{$d};
        foreach my $l (@lines) {
          if ($l =~ /^\-/) {
-           printf $tee $l . "\n";
+           print $tee $l . "\n";
          } elsif ($l =~ /^\@\@/) {
            if ($^O eq "MSWin32") {
-             printf $tee "$l\n";
+             printf $tee "%s\n", $l;
            } else {
-             printf $tee "\033[35m$l\033[0m\n";
+             printf $tee "\033[35m%s\033[0m\n", $l;
            }
          } else {
            if ($^O eq "MSWin32") {
-             printf $tee "$l\n";
+             printf $tee "%s\n", $l;
            } else {
-             printf $tee "\033[33m$l\033[0m\n";
+             printf $tee "\033[33m%s\033[0m\n", $l;
            }
          }
        }
