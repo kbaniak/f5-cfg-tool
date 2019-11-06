@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.5';
+my $version = '1.0.6';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -236,7 +236,7 @@ if ($opts{'b'}) {
   &batch_mode( $opts{'b'} );
   exit;
 }
-#-----------------------------------------------
+
 # single query mode
 if ($opts{'q'}) {
  printf $tee "received query: $opts{'q'}\n";
@@ -437,29 +437,6 @@ sub gen_tmstmp {
   return $ss;
 }
 
-sub tokenRequest() {
-  my $js = JSON->new;
-  my $z = {
-    username           => $usr,
-    password           => $pass,
-    loginProviderName  => 'tmos',
-  };
-  $js->pretty();
-
-  my $r = POST $URLB, 'Content-Type' => 'application/json', 'Content' => $js->encode( $z );
-  $r->authorization_basic($usr, $pass);
-  my $res = $ua->request( $r );
-  my $cd = $res->code;
-  my $resp = $res->content;
-
-  if ($cd ne 200) {
-    printf $tee "--- http post req error, code: $cd\n";
-    printf $tee "--- response: $resp\n";
-    exit;
-  }
-
-  return decode_json($res->content);
-}
 #
 # get system properties
 sub get_propsy {
@@ -486,6 +463,7 @@ sub get_propsy {
   }
   return %p;
 }
+
 #
 # query 2 JSON
 sub query2json {
@@ -530,6 +508,42 @@ sub query2object {
   my $uri = shift;
   my $mode = shift || 'no';
   return decode_json( &query2json( $uri, $mode ) );
+}
+
+sub tokenRequest() {
+  my $js = JSON->new;
+  my $z = {
+    username           => $usr,
+    password           => $pass,
+    loginProviderName  => 'tmos',
+  };
+  $js->pretty();
+
+  my $r = POST $URLB, 'Content-Type' => 'application/json', 'Content' => $js->encode( $z );
+  $r->authorization_basic($usr, $pass);
+  my $res = $ua->request( $r );
+  my $cd = $res->code;
+  my $resp = $res->content;
+
+  if ($cd ne 200) {
+    printf $tee "--- http post req error, code: $cd\n";
+    printf $tee "--- response: $resp\n";
+    exit;
+  }
+
+  return decode_json($res->content);
+}
+
+sub rawRequest() {
+  my ($method, $uri, $js) = @_;
+  my $r;
+  switch ($method) {
+    case 'POST' { 
+      $r = POST $uri, 'Content-Type' => 'application/json', 'Content' => $js;
+    }
+  };
+  $r->authorization_basic($usr, $pass);
+  return $ua->request( $r );
 }
 
 sub postRequest() {
@@ -659,6 +673,7 @@ sub objectarray2string(){
   }
   return join( "\n", @ret );
 }
+
 #
 # follow references and expand them by converting into objects
 #
@@ -732,6 +747,7 @@ sub dumpObject2Array() {
   }
   return @a;
 }
+
 #
 # analyze virtual servers
 #
@@ -860,6 +876,23 @@ sub loadMergeFile() {
   return &postRequest( $URL . 'sys/config', $js->encode( $z ) );
 }
 
+sub verifyMergeFile() {
+  my $fle = shift;
+  my $js = JSON->new;
+  my $z = {
+    command     => "load",
+    utilCmdArgs => "merge file $fle verify",
+  };
+  $js->pretty();
+  my $r = &rawRequest( 'POST', $URL . 'sys/config', $js->encode( $z ) );
+  if ($r->code eq 200) {
+    return 'OK';
+  } else {
+    my $m = &decode_json( $r->content );
+    return $m->{'message'};
+  }
+}
+
 sub createResource() {
   my ($t, $n, $part, $r, $mds) = @_;
   my $js = JSON->new;
@@ -974,7 +1007,7 @@ sub updateResource() {
     read $fh, my $buffer, -s $fh;
     close $fh;
     my $z = {
-      apiAnonymous => $buffer,
+      apiAnonymous => $buffer
     };
     return &putRequest( $URL . 'ltm/rule/' . $n, $js->encode( $z ) );
   }
@@ -1190,8 +1223,17 @@ sub batch_mode {
                 my $k = new CAudit( $host, $usr, $pass, $cport );
                 $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
               }
-              my $r = &loadMergeFile( $kx );
-              #printf Dumper($r);
+              if (defined($j->{'options'}{'verify_merge_sets'})) {
+                my $r = &verifyMergeFile( $kx );
+                if ($r ne 'OK') {
+                  printf $tee "-- merge stopped due to a verification failure: \033[31m%s\033[0m\n", $r;
+                  exit 1;
+                } else {
+                  &loadMergeFile( $kx );
+                }
+              } else {
+                &loadMergeFile( $kx );
+              }
             }
           }
         }
@@ -1203,6 +1245,10 @@ sub batch_mode {
     }
     # normal targets
     switch ($step) {
+      case 'COMPARE_DBSET' {
+        printf $tee "+-- [step: $step] comparing sys variables\n";
+        &report_dbvars( $j->{'dbvars'} );
+      }
       case 'COMPARE_RULES' {
         printf $tee "+-- [step: $step] comparing irule codebase\n";
         &report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j);
@@ -1478,7 +1524,6 @@ sub batch_mode {
             $k->uploadFile( $j->{'options'}, &parseFileToken($j->{'tmsh-merge'}[$tmsh_mg]), $j->{'tmsh-merge'}[$tmsh_mg] );
           }
           my $r = &loadMergeFile( $j->{'tmsh-merge'}[$tmsh_mg] );
-          #printf Dumper($r);
           $tmsh_mg++;
         }
       }
@@ -1641,7 +1686,31 @@ sub ctrim
   $str =~ s/^\s+|\s+$//g;
   return $str;
 }
+
 #
+# compare DB variables
+sub report_dbvars {
+  my ($defs) = @_;
+  
+  my $dbs = &query2object($URL . 'sys/db');
+  print $tee '-' x 120 . "\n";
+  printf " %48s | %24s | %24s | %8s \n", 'Variable', 'Wanted', 'Check', 'Status';
+  print $tee '-' x 120 . "\n";
+  foreach my $r ( @{ $dbs->{'items'} } )
+  {
+    if (grep { /^$r->{'fullPath'}$/ } keys %{ $defs })
+    {
+      my $state = "[\033[32mPASS\033[0m]";
+      my $sval = $r->{'value'};
+      if ($r->{'value'} ne $defs->{$r->{'fullPath'}}) {
+        $state = "[\033[31mFAIL\033[0m]";
+      }
+      printf $tee " %48s | %24s | %24s | %8s\n", $r->{'fullPath'}, $defs->{$r->{'fullPath'}}, $r->{'value'}, $state;
+    }
+  }
+  print $tee '-' x 120 . "\n";
+}
+
 # compare iRules on the Box vs a baseline
 # uses a baseline option
 sub report_irules
