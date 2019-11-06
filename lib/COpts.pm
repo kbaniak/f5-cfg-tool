@@ -19,12 +19,14 @@ my $ODEFS = {
                          regex => '^(rule|ifile|dgroup|monitor)$'
                        },
  "report_mode"      => { usage => "modify report output to batch friendly" },
+ "report_name"      => { usage => "modify report output by addinf parameter to a report function" },
  "mrf_sip"          => { usage => "dump mrf sip configuration to excel file" },
  "respOnly"         => { usage => "when executing command -x, print only the command result" }
 };
 
 my $BDEFS = {
   "MAKE_UCS"       => { usage => "create and download ucs archive" },
+  "MAKE_SCF"       => { usage => "create single configuration file backup (inlcuding a tar file)" },
   "LOAD_RULES"     => { usage => "load iRules from baseline directory: [ Hash(rules) of { priority } ]" },
   "UNBIND_VS"      => { usage => "unbind iRules from virtual servers: [ Hash(unbindvs) ]" },
   "REBIND_VS"      => { usage => "attach iRule to virtual servers: [ Hash(virtuals) of { site, rules } or [] ]" },
@@ -47,6 +49,8 @@ my $BDEFS = {
   "MSET:name"      => { usage => "merge set reference, name indicates named mereg set to be invoked" },
   "DELAY:seconds"  => { usage => "wait seconds before continuing" },
   "UPSET:name"     => { usage => "upload set of files denoted by a name" },
+  "COMPARE_DBSET"  => { usage => "compare db vars on target system with definitions <dbvars> from a batch file" },
+  "COMPARE_RULES"  => { usage => "compare rules on target system with rules from a configured set" },
 };
 
 my $BOPT_DEFS = {
@@ -107,7 +111,7 @@ sub batch_describe
 {
   my ($self) = @_;
   my $r = "";
-  foreach my $i ( keys %{ $BDEFS } ) {
+  foreach my $i ( sort keys %{ $BDEFS } ) {
     $r .= sprintf("   %-20s: %s\n", $i, $BDEFS->{$i}{'usage'});
   }
   return $r;
@@ -117,7 +121,7 @@ sub describe
 {
   my ($self) = @_;
   my $r = "";
-  foreach my $i ( keys %{ $ODEFS } ) {
+  foreach my $i ( sort keys %{ $ODEFS } ) {
     $r .= sprintf("   %-20s: %s\n", $i, $ODEFS->{$i}{'usage'});
   }
   return $r;
