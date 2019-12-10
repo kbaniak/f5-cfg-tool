@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.6';
+my $version = '1.0.7';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -753,8 +753,8 @@ sub dumpObject2Array() {
 #
 sub checkVirtuals {
   my $vs = &query2object( $URL . 'ltm/virtual' );
-  printf $tee "\n %42s | %8s | %8s | %-40s\n",'name','partition','type','vlan';
-  printf $tee "%s\n", '-' x 98;
+  printf $tee "\n %40s | %9s | %14s | %9s | %-40s\n",'name','partition','folder','type','vlan';
+  printf $tee "%s\n", '-' x 110;
   foreach my $r ( @{ $vs->{'items'} } ) {
     my $v = $r->{'vlans'};
     if ( ref $v eq 'ARRAY' ){
@@ -762,10 +762,13 @@ sub checkVirtuals {
     } else {
       $v = "-empty-";
     }
-
-    printf $tee " %42s | %8s | %8s | %-40s\n", $r->{'name'}, $r->{'partition'}, $r->{'ipProtocol'}, $v;
+    my $subp = '';
+    if (defined($r->{'subPath'})) {
+      $subp = $r->{'subPath'};
+    }
+    printf $tee " %40s | %9s | %14s | %9s | %-40s\n", $r->{'name'}, $r->{'partition'}, $subp, $r->{'ipProtocol'}, $v;
   }
-  printf $tee "%s\n", '-' x 98;
+  printf $tee "%s\n", '-' x 110;
 }
 
 #
@@ -797,12 +800,14 @@ sub checkRules {
 
   my $vss = &query2object( $URL . 'ltm/virtual');
   if ($verb) {
-    printf $tee "%s\n", '-' x 98;
-    printf $tee "\n %32s | %12s | %-40s\n",'name','partition','list of numbered iRules';
-    printf $tee "%s\n", '-' x 98;
+    printf $tee "%s\n", '-' x 160;
+    printf $tee "\n %32s | %12s | %32s | %-40s\n",'name','partition','application service','list of numbered iRules';
+    printf $tee "%s\n", '-' x 160;
   }
   foreach my $r ( @{ $vss->{'items'}}) {
     my $rl = '';
+    my $aps = $r->{'appService'} || '-';
+    $aps =~ s/\/Common\///;
     if (defined $r->{'rules'}) {
       my $fo = 0;
       foreach my $k ( @{ $r->{'rules'}} ) {
@@ -812,24 +817,24 @@ sub checkRules {
         }
         if ($fo == 0){
           $fo++;
-          if ($verb) { printf $tee " %32s | %12s | [%2d]  %-40s\n", $r->{'name'}, $r->{'partition'}, $fo, $k; }
+          if ($verb) { printf $tee " %32s | %12s | %32s | [%2d]  %-40s\n", $r->{'name'}, $r->{'partition'}, $aps, $fo, $k; }
         } else {
           $fo++;
-          if ($verb) { printf $tee " %44s    | [%2d]  %-40s\n", ' ', $fo, $k; }
+          if ($verb) { printf $tee " %32s | %12s | %32s | [%2d]  %-40s\n", ' ', ' ', ' ', $fo, $k; }
         }
       }
     } else {
-      if ($verb) { printf $tee " %32s | %12s | %40s\n", $r->{'name'}, $r->{'partition'}, $rl; }
+      if ($verb) { printf $tee " %32s | %12s | %32s | %40s\n", $r->{'name'}, $r->{'partition'}, $aps, $rl; }
     }
   }
   if ($verb) {
-    printf $tee "%s\n", '-' x 98;
+    printf $tee "%s\n", '-' x 160;
     printf $tee "\n+ unused iRules:\n";
-    printf $tee "%s\n", '-' x 98;
+    printf $tee "%s\n", '-' x 160;
     foreach my $k ( sort keys %RR ) {
       if ($RR{ $k } == 0) { printf $tee "$k\n"; }
     }
-    printf $tee "%s\n", '-' x 98;
+    printf $tee "%s\n", '-' x 160;
   }
   return %irules;
 }
@@ -1071,6 +1076,37 @@ sub deleteResource {
   my ($t, $n) = @_;
 }
 
+#
+# verify if specified resource exists in F5's configuration
+sub check_icr_path {
+  my ($def) = @_;
+  if (defined($def->{'type'} and defined($def->{'set'}))) {
+    print $tee "  . processing verify category: \x1b[34m$def->{'type'}\x1b[0m\n";
+    for my $item (sort @{ $def->{'set'} }) {
+      my $verd = "\x1b[31mMISS\x1b[0m";
+      my $pa = "Common";
+      if (defined($item->{'partition'})) {
+        $pa = $item->{'partition'};
+      }
+      if (defined($item->{'app'})) {
+        $pa .= "~$item->{'app'}";
+      }
+      my $r = &existsResource( "$def->{'type'}/~$pa~$item->{'name'}" );
+      if ($r) {
+        $verd = "\x1b[32mFOUND\x1b[0m";
+      }
+      if (defined($item->{'app'})) {
+        printf $tee "  %-32s: [%s] \n", "$item->{'app'}/$item->{'name'}", $verd;
+      } else {
+        printf $tee "  %-32s: [%s] \n", $item->{'name'}, $verd;
+      }
+    }
+  } else {
+    print $tee "error while processing verification set: ";
+    exit 1;
+  }
+}
+
 sub get_running_software() {
   my %p;
   my $r = &query2object( $URL . 'sys/software/volume');
@@ -1214,12 +1250,18 @@ sub batch_mode {
             }
           }
         }
+        case 'RSET' {
+          printf $tee "+-- [step: $step] updating a set of irules: $otgt[1]\n";
+          if ((defined $j->{'ruleset'}) && (defined $j->{'ruleset'}{$otgt[1]})) {
+            &load_irules( $j, $otgt[1] );
+          }
+        }
         case 'MSET' {
           printf $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n";
           if ((defined $j->{'mergeset'}) && (defined $j->{'mergeset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'mergeset'}{$otgt[1]} }) {
               if (defined $j->{'options'}{'base_location'}) {
-                print $tee "   . merging file: $kx\n";
+                print $tee "  . \x1b[34mmerging file: $kx\x1b[0m\n";
                 my $k = new CAudit( $host, $usr, $pass, $cport );
                 $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
               }
@@ -1234,6 +1276,15 @@ sub batch_mode {
               } else {
                 &loadMergeFile( $kx );
               }
+            }
+          }
+        }
+        case 'VERIFY_SET' {
+          printf $tee "+-- [step: $step] processing verification set: $otgt[1]\n";
+          if ((defined $j->{'verifyset'}) && (defined $j->{'verifyset'}{$otgt[1]})) {
+            foreach my $kx ( @{ $j->{'verifyset'}{$otgt[1]} }) {
+              # kx is an object: type - icr path,  set - list of items to check
+              &check_icr_path( $kx );
             }
           }
         }
@@ -1624,17 +1675,27 @@ sub parseFileToken
 sub load_irules
 {
   my $c = shift;
+  my $f = shift;
   my %rls = &checkRules;
   my @rs;
 
   # load file into buffer
-  foreach my $rl (sort keys %{ $c->{'rules'} }) {
-    if (defined $c->{'rules'}{$rl}{'priority'}) {
+  my %rules = ();
+  
+  if ($f and $f ne '') {
+    printf $tee "  . load_rules:: using ruleset definition: $f\n";
+    %rules  = %{ $c->{'ruleset'}{$f} };
+  } else {
+    %rules = %{ $c->{'rules'} };
+  }
+
+  foreach my $rl (sort keys %rules) {
+    if (defined $rules{$rl}{'priority'}) {
       push @rs, $rl;
     }
   }
-  foreach my $rl (sort keys %{ $c->{'rules'} }) {
-    if (not defined $c->{'rules'}{$rl}{'priority'}) {
+  foreach my $rl (sort keys %rules) {
+    if (not defined $rules{$rl}{'priority'}) {
       push @rs, $rl;
     }
   }
@@ -1642,10 +1703,10 @@ sub load_irules
   foreach my $rl ( @rs ) {
     my $fhss = "$c->{'options'}{rules_location}/$rl.tcl";
     if (defined $rls{$rl}) {
-      printf $tee "  . updating rule: $rl\n";
+      printf $tee "  . \x1b[32mupdating rule: $rl\x1b[0m\n";
       &updateResource('rule', $rl, 'Common', $fhss);
     } else {
-      printf $tee "  . installing rule: $rl\n";
+      printf $tee "  . \x1b[33minstalling rule: $rl\x1b[0m\n";
       &createResource('rule', $rl, 'Common', $fhss, '');
     }
   }

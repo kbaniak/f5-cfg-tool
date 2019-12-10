@@ -47,10 +47,12 @@ my $BDEFS = {
   "DOWNLOAD"       => { usage => "download file from remote system" },
   "CSET:name"      => { usage => "command set reference, name indicated named command set to be invoked" },
   "MSET:name"      => { usage => "merge set reference, name indicates named mereg set to be invoked" },
+  "RSET:name"      => { usage => "merge specific iRule set defined in ruleset setion of a batch file" },
   "DELAY:seconds"  => { usage => "wait seconds before continuing" },
   "UPSET:name"     => { usage => "upload set of files denoted by a name" },
   "COMPARE_DBSET"  => { usage => "compare db vars on target system with definitions <dbvars> from a batch file" },
   "COMPARE_RULES"  => { usage => "compare rules on target system with rules from a configured set" },
+  "VERIFY_SET:name" => { usage => "run verification procedure on a verifyset. Verify set must inlude a list of objects\n\t\t\tthat specify tpe and set of items to check" },
 };
 
 my $BOPT_DEFS = {
