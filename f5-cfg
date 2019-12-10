@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.7';
+my $version = '1.0.8';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -773,7 +773,11 @@ sub checkVirtuals {
 
 #
 # analyze iRules
-#
+# returns a hash with irule_name as a key and props:
+# - used      : 1|0
+# - modified  : 1|0
+# - hash      : sha1 of iRule code
+# - partition
 sub checkRules {
   my $rules = &query2object( $URL . 'ltm/rule');
   if ($debug_rules) { print Dumper($rules); }
@@ -1674,6 +1678,21 @@ sub parseFileToken
   return $fn[$#fn];
 }
 
+#
+# compute sha1 from a file contents
+sub get_file_sha1
+{
+  my ($fn, $mode) = @_;
+  open my $fh, "<", $fn or die "--- Error opening resource file $fn!\n";
+  read $fh, my $buffer, -s $fh;
+  if ($mode eq 'iRule') { chomp($buffer); }
+  close $fh;
+
+  return sha1_hex( $buffer );
+}
+
+#
+# load irules onto F5 device
 sub load_irules
 {
   my $c = shift;
@@ -1704,11 +1723,16 @@ sub load_irules
 
   foreach my $rl ( @rs ) {
     my $fhss = "$c->{'options'}{rules_location}/$rl.tcl";
+    my $fhss_sha = &get_file_sha1( $fhss, 'iRule' );
     if (defined $rls{$rl}) {
-      printf $tee "  . \x1b[32mupdating rule: $rl\x1b[0m\n";
-      &updateResource('rule', $rl, 'Common', $fhss);
+      if ($fhss_sha ne $rls{$rl}{'hash'}) {
+        printf $tee "  . \x1b[32mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
+        &updateResource('rule', $rl, 'Common', $fhss);
+      } else {
+        printf $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
+      }
     } else {
-      printf $tee "  . \x1b[33minstalling rule: $rl\x1b[0m\n";
+      printf $tee "  . \x1b[33minstalling rule: $rl\x1b[0m <hash $fhss_sha>\n";
       &createResource('rule', $rl, 'Common', $fhss, '');
     }
   }
