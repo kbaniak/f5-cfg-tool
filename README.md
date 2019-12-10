@@ -26,6 +26,73 @@ cd f5-cfg-tool
 ./f5-cfg -t 1.1.1.1 -u admin -p admin -b /path/batch_file.json -Z rules
 ```
 
+## Batch files
+
+Batch files are used to specify automated tasks to be executed during F5 configuration or maintenance.
+The batch file is json formatted.
+
+```
+{
+  "system":      "*",
+  "system-ip":   "*",
+  "sw-version":  "*",
+  "description": "description",
+  "version":     "1",
+  "author":      "Jon Doe",
+  "steps" :   [ "SAVE" ],
+  "stepset": {
+    "check":  [ "COMPARE_RULES", "VERIFY_SET:mop_optimize" ],
+    "rules":  [ "LOAD_RULES" ],
+    "dbvars": [ "COMPARE_DBSET" ],
+    "gomop":  [ "RSET:mop_optimize", "MSET:mop_optimize", "SAVE", "SYNC" ]
+  },
+  "rules": [
+    "rule1": { "priority": 1 },
+    "rule2": {},
+    "rule3": {}
+  ],
+  "ruleset": {
+    "mop_optimize": [
+      "rule1": { "priority": 1 },
+      "rule2": {}
+    ]
+  },
+  "mergeset": {
+    "mop_optimize": [ "/shared/tmp/file_tmsh_1.txt" ]
+  },
+  "dbvars": {
+    "tm.tcpsegmentationoffload": "disable",
+    "connection.syncookies.threshold": "100000000",
+    "pvasyncookies.virtual.maxsyncache": "4093",
+    "tm.maxrejectrate": "1000",
+    "tmm.sessiondb.table_cmd_timeout_override": "true",
+    "tm.tcpprogressive.autobuffertuning": "disable",
+    "tm.minipfragsize": "556",
+    "kernel.pti": "disable",
+    "statemirror.clustermirroring": "between"
+  },
+  "options": {
+    "rules_location":    "./iRules",
+    "working-directory": "./",
+    "base_location":     "./FE/",
+    "search_path":       [ ],
+    "irule_diff":        true
+  }
+}
+```
+
+Batch file contains sections that govern how it is processed:
+
+- header, that specifies what system we touch and restrictions (regex) to which IP address and ltm software version we may apply this batch
+- steps, default step for a batch file
+- stepsets, a list of step sets that are selected using -Z option for f5-cfg
+- number of sections with definitions of actions or resources. Examples:
+  - mergeset: named list of files to tmsh merge
+  - ruleset: named list of iRules to load
+  - rules: list of irules to load or verify their existcence with a diff command
+  - dbvars: list of db variables to verify
+- options: list of settings and batch options. For instance specifying location of resources or search folders 
+
 ## Usage Details
 ```
 options:
@@ -77,7 +144,6 @@ options:
    respOnly            : when executing command -x, print only the command result
    supress_log         : supress log audit to a file
 
-
  list of known batch commands
    ABORT               : abort at a given step
    COMMAND             : execute shell comamnd: [ Array(command) ]
@@ -99,12 +165,28 @@ options:
    REBIND_VS           : attach iRule to virtual servers: [ Hash(virtuals) of { site, rules } or [] ]
    RECERT              : create iRule certificates
    RENAME              : rename configuration objects: [ Hash(rename) ]
+   RSET:name           : merge specific iRule set defined in ruleset setion of a batch file
    SAVE                : save configuration on a F5 unit
    SYNC                : synchronize a F5 cluster
    UNBIND_VS           : unbind iRules from virtual servers: [ Hash(unbindvs) ]
    UPLOAD              : upload resources on the box: [ Array(upload) ]
    UPSET:name          : upload set of files denoted by a name
    VERIFY              : verify that all operations are going to be successful
+   VERIFY_SET:name     : run verification procedure on a verifyset. Verify set must inlude a list of objects
+                  			 that specify tpe and set of items to check
+
+ list of batch options to be used in options section in json definition:
+   base_location       : indicates directory where to llok for resource files
+   irule_diff          : true/false - use diff to show discrepancies in irules for the COMPARE_RULES command
+   remove_created_ucs  : remove ucs or scf after download
+   rules_location      : location of iRules for given batch
+   search_path         : array containing search relative subdirectories to look for resources used in a batch 
+   signing_key         : irule signing key
+   store_location      : used by a download command
+   ucs-file-name       : name of the ucs file to save
+   verify_merge_sets   : verify merge sets before commiting changes
+   working-directory   : working directory, ie: to save files. if ./ is used then it is relative to a run directory
+
 
 ```
 
