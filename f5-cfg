@@ -1081,6 +1081,7 @@ sub deleteResource {
 sub check_icr_path {
   my ($def) = @_;
   if (defined($def->{'type'} and defined($def->{'set'}))) {
+    printf $tee '-'x 110 . "\n";
     print $tee "  . processing verify category: \x1b[34m$def->{'type'}\x1b[0m\n";
     for my $item (sort @{ $def->{'set'} }) {
       my $verd = "\x1b[31mMISS\x1b[0m";
@@ -1101,6 +1102,7 @@ sub check_icr_path {
         printf $tee "  %-32s: [%s] \n", $item->{'name'}, $verd;
       }
     }
+    printf $tee '-'x 110 . "\n";
   } else {
     print $tee "error while processing verification set: ";
     exit 1;

@@ -55,8 +55,17 @@ my $BDEFS = {
   "VERIFY_SET:name" => { usage => "run verification procedure on a verifyset. Verify set must inlude a list of objects\n\t\t\tthat specify tpe and set of items to check" },
 };
 
-my $BOPT_DEFS = {
-
+my $BOPTS = {
+  "working-directory"   => "working directory, ie: to save files. if ./ is used then it is relative to a run directory",
+  "ucs-file-name"       => "name of the ucs file to save",
+  "base_location"       => "indicates directory where to llok for resource files",
+  "rules_location"      => "location of iRules for given batch",
+  "verify_merge_sets"   => "verify merge sets before commiting changes",
+  "remove_created_ucs"  => "remove ucs or scf after download",
+  "signing_key"         => "irule signing key",
+  "store_location"      => "used by a download command",
+  "search_path"         => "array containing search relative subdirectories to look for resources used in a batch ",
+  "irule_diff"          => "true/false - use diff to show discrepancies in irules for the COMPARE_RULES command"
 };
 
 sub new
@@ -115,6 +124,10 @@ sub batch_describe
   my $r = "";
   foreach my $i ( sort keys %{ $BDEFS } ) {
     $r .= sprintf("   %-20s: %s\n", $i, $BDEFS->{$i}{'usage'});
+  }
+  $r .= sprintf("\n list of batch options to be used in options section in json definition:\n");
+  foreach my $i ( sort keys %{ $BOPTS } ) {
+    $r .= sprintf("   %-20s: %s\n", $i, $BOPTS->{$i});
   }
   return $r;
 }
