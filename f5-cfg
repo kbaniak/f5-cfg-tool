@@ -205,9 +205,10 @@ if ($wDir ne '') {
 }
 # -----------------------------------------------
 # Debug settings
-my $db_cr = 0;
-if ($opts{'d'}){
-  $debug_vs = $debug_prof = 1;
+if ($opts{'d'}) {
+  # enable debug
+  $debug_rules = 1;
+  $db_cr = 1;
 }
 #------------------------------------------------
 # LWP settings
