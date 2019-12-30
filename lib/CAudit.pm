@@ -173,16 +173,12 @@ sub uploadFile
   my $preferred_chunk_size = 65536/2;
   my $chunk_size = 65536/2;
   my $total_bytes = 0;
-  my $prefix = "";
 
   my $localFile = $fname;
   if (defined($opts)) {
     if (defined($opts->{"base_location"})) {
       $localFile = $opts->{"base_location"} . "/" . $fname;
-      if ($opts && $opts->{"rundir"}) {
-        $prefix = $opts->{"rundir"};
-      }
-      if (! -e $prefix . "/" . $localFile) {
+      if (! -e $localFile) {
         if (defined($opts->{"search_path"})) {
           #
           # TODO: cycle through search locations, so far only first item from the list
@@ -203,7 +199,7 @@ sub uploadFile
     'Authorization' => 'Basic ' . MIME::Base64::encode("$self->{'_user'}:$self->{'_pass'}", '')
   );
 
-  open(FH, "< $prefix" . "/" . "$localFile") or die("Can't open $localFile for input: $!");
+  open(FH, "< $localFile") or die("Can't open $localFile for input: $!");
   binmode(FH);
 
   while ($bContinue) {

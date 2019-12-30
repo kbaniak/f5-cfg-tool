@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.8';
+my $version = '1.0.9';
 
 # --------- DEBUG vars -----------------
 my $debug_rules = 0;
@@ -87,6 +87,7 @@ if ($opts{'h'}){
  --------------------------------------------------------------------------------------------
 
    -h           : this help message
+   -d           : debug mode
    -q query     : single query mode, will not produce output file
    -u user      : user, default is admin
    -p password  : password, default is admin
@@ -131,10 +132,8 @@ QQQ
 
 STDOUT->autoflush(1);
 
-# -- cached F5 nodes
-my %nodes = (
-  'test'  => '192.168.1.254'
-);
+# -- Orange F5 nodes
+my %nodes = %{ load_dataset_from_file('./cfg/nodes.json', 'nodes') };
 my %props = ();
 my %srun = ();
 # ----------------- SETTINGS --------------------
@@ -190,7 +189,7 @@ if ($opts{'Q'} or ($popts->get('supress_log') eq "yes")) {
 }
 #-------------------------------------------------
 # determine host and authentication details
-&update_host( $host );
+update_host( $host );
 #-------------------------------------------------
 # working directory settings
 my $remove_temp = 1;
@@ -201,6 +200,14 @@ if ($wDir ne '') {
     printf $tee "!-- working directory not found: $wDir\n";
     exit;
   }
+} else {
+  $wDir = $rundir;
+}
+# -----------------------------------------------
+# Debug settings
+my $db_cr = 0;
+if ($opts{'d'}){
+  $debug_vs = $debug_prof = 1;
 }
 #------------------------------------------------
 # LWP settings
@@ -231,15 +238,15 @@ if ($popts->get('bigiq') ne '') {
 #-----------------------------------------------
 # batch mode
 if ($opts{'b'}) {
-  printf $tee "+ running in a batch mode\n";
-  printf $tee "+-- input file: $opts{'b'}\n";
-  &batch_mode( $opts{'b'} );
+  print $tee "+ running in a batch mode\n";
+  print $tee "+-- input file: $opts{'b'}\n";
+  batch_mode( $opts{'b'} );
   exit;
 }
 
 # single query mode
 if ($opts{'q'}) {
- printf $tee "received query: $opts{'q'}\n";
+ print $tee "received query: $opts{'q'}\n";
  my $p = $opts{'q'};
  if ($p and $p ne '-') {
    my $curl = $URL;
@@ -247,9 +254,9 @@ if ($opts{'q'}) {
      $curl = $URL_BARE;
    }
    if ($popts->get('format') eq 'json') {
-     printf $tee &query2json( $curl . $p );
+     print $tee query2json( $curl . $p );
    } else {
-     printf $tee Dumper( &query2object( $curl . $p ));
+     print $tee Dumper( query2object( $curl . $p ));
    }
  }
  exit;
@@ -257,7 +264,7 @@ if ($opts{'q'}) {
 #------------------------------------------------
 # cmd mode
 if ($opts{'x'}) {
-  my $data = &runGenericCommand($opts{'x'});
+  my $data = runGenericCommand($opts{'x'});
   if ($popts->get("respOnly") ne "") {
     if (defined $data->{'commandResult'}) {
       print $tee $data->{'commandResult'};
@@ -276,15 +283,18 @@ if ($opts{'R'}) {
     &update_platform_properties;
     &print_platform_properties;
   }
-  printf $tee "+ running report: $opts{'R'} \n";
+  print $tee "+ running report: $opts{'R'} \n";
   my $tms = strftime("%a %d %b %H:%M:%S %Y", localtime);
   printf $tee "+ timestamp: %s\n", $tms;
   switch ($opts{'R'}) {
     case 'RULE' {
-      &report_irules;
+      &report_irules($popts->get('base'), $popts->get('diff'));
     }
     case 'ISTATS' {
       &report_istats_generic;
+    }
+    default {
+      &run_custom_report($opts{'R'});
     }
   }
   exit;
@@ -297,37 +307,37 @@ if ($opts{'c'} or $opts{'C'}) {
     $_t = $popts->get('ctype');
   }
   if ($opts{'c'}) {
-    printf $tee "+ creating resource of type: $_t: $opts{'c'}\n";
-    &createResource($_t, $opts{'c'}, 'Common', $ifns,'');
+    print $tee "+ creating resource of type: $_t: $opts{'c'}\n";
+    createResource($_t, $opts{'c'}, 'Common', $ifns,'');
   } else {
-    printf $tee "+ updating resource of type: $_t: $opts{'C'}\n";
-    &updateResource($_t, $opts{'C'}, 'Common', $ifns);
+    print $tee "+ updating resource of type: $_t: $opts{'C'}\n";
+    updateResource($_t, $opts{'C'}, 'Common', $ifns);
   }
   exit;
 }
 #-----------------------------------------------
 if ($opts{'k'}) {
-  printf $tee "+ analysing iRules and their alloactions ...\n";
-  &checkRules( 1 );
+  print $tee "+ analysing iRules and their alloactions ...\n";
+  checkRules( 1 );
   exit;
 }
 #-----------------------------------------------
 if ($opts{'K'}) {
-  printf $tee "+ analysing Listeners and their alloactions ...\n";
+  print $tee "+ analysing Listeners and their alloactions ...\n";
   &checkVirtuals;
   exit;
 }
 #-----------------------------------------------
 if ($opts{'s'}) {
-  printf $tee "+ saving configuration ...\n";
+  print $tee "+ saving configuration ...\n";
   &saveRunConfig;
   exit;
 }
 #-----------------------------------------------
 if ($opts{'S'}) {
   if (defined $props{'failover cluster'}) {
-    printf $tee "+ synchronizing configuration in the cluster: $props{'failover cluster'}...\n";
-    &syncCluster( $props{'failover cluster'} );
+    print $tee "+ synchronizing configuration in the cluster: $props{'failover cluster'}...\n";
+    syncCluster( $props{'failover cluster'} );
   }
   exit;
 }
@@ -343,11 +353,11 @@ if ( $opts{'A'} ) {
   print "++ creating databook archive: $d\n";
   mkdir $d;
   mkdir "$d/iRules";
-  my $rules = &query2object( $URL . 'ltm/rule');
+  my $rules = query2object( $URL . 'ltm/rule');
   if ($debug_rules) { print Dumper($rules); }
   foreach my $r ( @{ $rules->{'items'} }) {
     next if ($r->{'name'} =~ /^_sys_/);
-    printf $tee "dumping iRule: $r->{'name'}, partition: $r->{'partition'}\n";
+    print $tee "dumping iRule: $r->{'name'}, partition: $r->{'partition'}\n";
     unless (-e "$d/iRules/$r->{'partition'}"){
       mkdir "$d/iRules/$r->{'partition'}";
     }
@@ -357,9 +367,9 @@ if ( $opts{'A'} ) {
   }
 
   mkdir "$d/Scripts";
-  my $scr = &query2object( $URL . 'cli/script' );
+  my $scr = query2object( $URL . 'cli/script' );
   foreach my $r ( @{ $scr->{'items'} } ) {
-    printf $tee "dumping cli script: $r->{'name'}, partition: $r->{'partition'}\n";
+    print $tee "dumping cli script: $r->{'name'}, partition: $r->{'partition'}\n";
     unless (-e "$d/Scripts/$r->{'partition'}"){
       mkdir "$d/Scripts/$r->{'partition'}";
     }
@@ -368,7 +378,7 @@ if ( $opts{'A'} ) {
     close($fh);
   }
 
-  my $dg = &query2object( $URL . 'ltm/data-group/internal');
+  my $dg = query2object( $URL . 'ltm/data-group/internal');
   my $js = JSON->new;
   $js->pretty();
   open my $fh, ">", "$d/data-groups-internal.json" or die "--- Error: Cannot create dg file!\n";
@@ -383,15 +393,31 @@ if ( $opts{'A'} ) {
     `tar -cf $rundir/$wDir$d.tar $d/`;
   }
   if ($remove_temp) {
-    printf $tee "... trying to remove directory";
+    print $tee "... trying to remove directory";
     remove_tree("$d");
   }
 }
-printf $tee "+++ job's done.";
+print $tee "+++ job's done.";
 exit;
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Routines
+
+#
+# load config from a file with json encoding
+sub load_dataset_from_file
+{
+  my ($fname, $type) = @_;
+  open my $fh, "<", "$fname" or die "--- Error opening resource file: $fname!\n";
+  read $fh, my $buffer, -s $fh;
+  close $fh;
+  my $k = decode_json( $buffer );
+  if (defined($k->{$type})) {
+    return $k->{$type};
+  } else {
+    return undef;
+  }
+}
 
 # update platform structures
 sub update_platform_properties {
@@ -400,7 +426,7 @@ sub update_platform_properties {
 }
 # print information about F5 device (or a cluster node)
 sub print_platform_properties {
-  printf $tee "system properties: \n";
+  print $tee "system properties: \n";
   foreach my $k (sort keys %props){
     printf $tee "  %40s: %s\n", $k, $props{$k};
   }
@@ -420,9 +446,9 @@ sub update_host {
       $URL_BARE = "https://$host/";
       $URL = "https://$host/mgmt/tm/";
       $URLB = "https://$host/mgmt/shared/authn/login";
-      unless ($opts{'Q'}) { printf $tee "+ host $host_name mapped to: [ $host ]\n"; }
+      unless ($opts{'Q'}) { print $tee "+ host $host_name mapped to: [ $host ]\n"; }
     } else {
-      printf $tee "--- unknown host given!\n";
+      print $tee "--- unknown host given!\n";
       exit;
     }
   }
@@ -441,18 +467,18 @@ sub gen_tmstmp {
 # get system properties
 sub get_propsy {
   my %p;
-  my $r = &query2object( $URL . 'sys/hardware');
+  my $r = query2object( $URL . 'sys/hardware');
   $p{'marketingName'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform/0'}{'nestedStats'}{'entries'}{'marketingName'}{'description'};
   $p{'baseMac'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/platform/0'}{'nestedStats'}{'entries'}{'baseMac'}{'description'};
   $p{'bigipChassisSerialNum'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info/0'}{'nestedStats'}{'entries'}{'bigipChassisSerialNum'}{'description'};
   $p{'platform'} = $r->{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info'}{'nestedStats'}{'entries'}{'https://localhost/mgmt/tm/sys/hardware/system-info/0'}{'nestedStats'}{'entries'}{'platform'}{'description'};
-  $r = &query2object( $URL . 'cm/device-group');
+  $r = query2object( $URL . 'cm/device-group');
   foreach my $e ( @{ $r->{'items'} }) {
     if ($e->{'type'} eq 'sync-failover') {
       $p{'failover cluster'} = $e->{'name'};
     }
   }
-  $r = &query2object( $URL . 'cm/device' );
+  $r = query2object( $URL . 'cm/device' );
   $p{'fovState'} = 'passive';
   foreach my $e ( @{ $r->{'items'}} ) {
     if ($e->{'managementIp'} eq $host) {
@@ -466,7 +492,8 @@ sub get_propsy {
 
 #
 # query 2 JSON
-sub query2json {
+sub query2json
+{
   my $uri = shift;
   my $mode = shift || 'no';
   if ($mode eq 'yes') {
@@ -495,22 +522,45 @@ sub query2json {
     if (($cd eq 404) && ($resp =~ /was not found/)){
       return $js->encode( { error => 'not found' } );
     } else {
-      printf $tee "--- http get req error, code: $cd\n";
-      printf $tee "--- response: $resp\n";
+      print $tee "--- http get req error, code: $cd\n";
+      print $tee "--- response: $resp\n";
       exit;
     }
   }
+
+  # we get final response
+  if ($popts->get('save_query_result') eq 'yes') {
+    if (! -e "$wDir/.creq-cache") {
+      print $tee "- creating json cache dir: $wDir/.creq-cache\n";
+      mkdir "$wDir/.creq-cache";
+    }
+    my $curi;
+    if ($uri =~ /^https:\/\/.+\/mgmt\/tm\/(.+)$/) {
+      $curi = $1;
+      $curi =~ s/\?.*//;
+      $curi = join('-', split('/', $curi));
+      my $lcfile = "$wDir/.creq-cache/$host-$curi-$tmp_stmp.json";
+
+      open my $fh, ">", $lcfile or die "--- Error creating json file: $lcfile!\n";
+      print $fh $res->content;
+      close $fh;
+    }
+  }
+
+  # return results
   return $js->encode( $js->decode($res->content) );
 }
 #
 # query 2 perl object
-sub query2object {
+sub query2object
+{
   my $uri = shift;
   my $mode = shift || 'no';
-  return decode_json( &query2json( $uri, $mode ) );
+  return decode_json( query2json( $uri, $mode ) );
 }
 
-sub tokenRequest() {
+sub tokenRequest
+{
   my $js = JSON->new;
   my $z = {
     username           => $usr,
@@ -526,19 +576,20 @@ sub tokenRequest() {
   my $resp = $res->content;
 
   if ($cd ne 200) {
-    printf $tee "--- http post req error, code: $cd\n";
-    printf $tee "--- response: $resp\n";
+    print $tee "--- http post req error, code: $cd\n";
+    print $tee "--- response: $resp\n";
     exit;
   }
 
   return decode_json($res->content);
 }
 
-sub rawRequest() {
+sub rawRequest
+{
   my ($method, $uri, $js) = @_;
   my $r;
   switch ($method) {
-    case 'POST' { 
+    case 'POST' {
       $r = POST $uri, 'Content-Type' => 'application/json', 'Content' => $js;
     }
   };
@@ -546,7 +597,8 @@ sub rawRequest() {
   return $ua->request( $r );
 }
 
-sub postRequest() {
+sub postRequest
+{
   my $u = shift;
   my $js = shift;
   my $deb = shift || 'no';
@@ -561,15 +613,16 @@ sub postRequest() {
   }
 
   if ($cd ne 200) {
-    printf $tee "--- http post req error, code: $cd\n";
-    printf $tee "--- response: $resp\n";
+    print $tee "--- http post req error, code: $cd\n";
+    print $tee "--- response: $resp\n";
     exit;
   }
 
   return decode_json($res->content);
 }
 
-sub putRequest() {
+sub putRequest
+{
   my $u = shift;
   my $js = shift;
   my $r = PUT $u, 'Content-Type' => 'application/json', 'Content' => $js;
@@ -579,15 +632,16 @@ sub putRequest() {
   my $resp = $res->content;
 
   if ($cd ne 200) {
-    printf $tee "--- http put req error, code: $cd\n";
-    printf $tee "--- response: $resp\n";
+    print $tee "--- http put req error, code: $cd\n";
+    print $tee "--- response: $resp\n";
     exit;
   }
 
   return decode_json($res->content);
 }
 
-sub patchRequest() {
+sub patchRequest
+{
   my $u = shift;
   my $js = shift;
   my $r = HTTP::Request->new(PATCH => $u);
@@ -599,14 +653,15 @@ sub patchRequest() {
   my $resp = $res->content;
 
   if ($cd ne 200) {
-    printf $tee "--- http patch req error, code: $cd\n";
-    printf $tee "--- response: $resp\n";
+    print $tee "--- http patch req error, code: $cd\n";
+    print $tee "--- response: $resp\n";
     exit;
   }
   return decode_json($res->content);
 }
 
-sub deleteRequest() {
+sub deleteRequest
+{
   my $u = shift;
   my $r = HTTP::Request->new(DELETE => $u);
   $r->authorization_basic($usr, $pass);
@@ -618,8 +673,8 @@ sub deleteRequest() {
     if (($cd eq 404) && ($resp =~ /was not found/)){
       return 2;
     } else {
-      printf $tee "--- http delete req error, code: $cd\n";
-      printf $tee "--- response: $resp\n";
+      print $tee "--- http delete req error, code: $cd\n";
+      print $tee "--- response: $resp\n";
       exit;
     }
   }
@@ -628,7 +683,8 @@ sub deleteRequest() {
 #
 # Converts Object to string
 #
-sub obj2str() {
+sub obj2str
+{
   my $obj = shift;
   my $ret = "-";
 
@@ -658,7 +714,8 @@ sub obj2str() {
 #
 # Convert array of Objects to a string
 #
-sub objectarray2string(){
+sub objectarray2string
+{
   my $a = shift;
   my @ret;
   foreach my $it ( @{ $a } ){
@@ -677,7 +734,8 @@ sub objectarray2string(){
 #
 # follow references and expand them by converting into objects
 #
-sub checkReference(){
+sub checkReference
+{
   my $r  = shift;
   my $ar = [];
 
@@ -692,8 +750,8 @@ sub checkReference(){
         # since version 12.0 additional references are included in ARRAY for given property such as iRule, vlan, profile
         #
         if ($ct eq 'HASH') {
-          my $qe = &query2object( $e->{$p}{'link'}, 'yes');
-          #$z->{$p} = &objectarray2string( $qe->{'items'} );
+          my $qe = query2object( $e->{$p}{'link'}, 'yes');
+          #$z->{$p} = objectarray2string( $qe->{'items'} );
           $z->{$p} = $qe->{'items'};
         }
       } else {
@@ -708,7 +766,8 @@ sub checkReference(){
 #
 # same as above but for flat type of collections
 #
-sub checkReferenceFlat(){
+sub checkReferenceFlat
+{
   my $r  = shift;
   my $z = {};
 
@@ -718,8 +777,8 @@ sub checkReferenceFlat(){
       my $ct = ref $$r->{$p};
       #print " cRF: $p : $ct";
       if ($ct eq 'HASH') {
-        my $qe = &query2object( $$r->{$p}{'link'}, 'yes');
-        $z->{$p} = &objectarray2string( $qe->{'items'} );
+        my $qe = query2object( $$r->{$p}{'link'}, 'yes');
+        $z->{$p} = objectarray2string( $qe->{'items'} );
       }
     } else {
       $z->{$p} = $$r->{$p};
@@ -728,7 +787,7 @@ sub checkReferenceFlat(){
   $$r = $z;
 }
 
-sub dumpObject2Array() {
+sub dumpObject2Array {
   my $obj = shift;
   my $hea = shift || 0;
   my @a = qw( name );
@@ -742,7 +801,7 @@ sub dumpObject2Array() {
     if ($hea) {
       return @a;
     } else {
-      return map { if ($_ eq 'name'){ $obj->{'name'} } else { &obj2str( $obj->{$_} ) } } @a;
+      return map { if ($_ eq 'name'){ $obj->{'name'} } else { obj2str( $obj->{$_} ) } } @a;
     }
   }
   return @a;
@@ -752,7 +811,7 @@ sub dumpObject2Array() {
 # analyze virtual servers
 #
 sub checkVirtuals {
-  my $vs = &query2object( $URL . 'ltm/virtual' );
+  my $vs = query2object( $URL . 'ltm/virtual' );
   printf $tee "\n %40s | %9s | %14s | %9s | %-40s\n",'name','partition','folder','type','vlan';
   printf $tee "%s\n", '-' x 110;
   foreach my $r ( @{ $vs->{'items'} } ) {
@@ -779,7 +838,7 @@ sub checkVirtuals {
 # - hash      : sha1 of iRule code
 # - partition
 sub checkRules {
-  my $rules = &query2object( $URL . 'ltm/rule');
+  my $rules = query2object( $URL . 'ltm/rule');
   if ($debug_rules) { print Dumper($rules); }
   my %RR = qw();
   my $verb = shift || 0;
@@ -802,7 +861,7 @@ sub checkRules {
     };
   }
 
-  my $vss = &query2object( $URL . 'ltm/virtual');
+  my $vss = query2object( $URL . 'ltm/virtual');
   if ($verb) {
     printf $tee "%s\n", '-' x 160;
     printf $tee "\n %32s | %12s | %32s | %-40s\n",'name','partition','application service','list of numbered iRules';
@@ -833,26 +892,28 @@ sub checkRules {
   }
   if ($verb) {
     printf $tee "%s\n", '-' x 160;
-    printf $tee "\n+ unused iRules:\n";
+    print $tee "\n+ unused iRules:\n";
     printf $tee "%s\n", '-' x 160;
     foreach my $k ( sort keys %RR ) {
-      if ($RR{ $k } == 0) { printf $tee "$k\n"; }
+      if ($RR{ $k } == 0) { print $tee "$k\n"; }
     }
     printf $tee "%s\n", '-' x 160;
   }
   return %irules;
 }
 
-sub saveRunConfig() {
+sub saveRunConfig
+{
   my $js = JSON->new;
   my $z = {
     command => "save",
   };
   $js->pretty();
-  return &postRequest( $URL . 'sys/config', $js->encode( $z ), 'no' );
+  return postRequest( $URL . 'sys/config', $js->encode( $z ), 'no' );
 }
 
-sub syncCluster() {
+sub syncCluster
+{
   my $grp = shift;
   my $js = JSON->new;
   my $z = {
@@ -860,10 +921,11 @@ sub syncCluster() {
     utilCmdArgs => "config-sync to-group $grp",
   };
   $js->pretty();
-  return &postRequest( $URL . 'cm', $js->encode( $z ), 'yes' );
+  return postRequest( $URL . 'cm', $js->encode( $z ), 'yes' );
 }
 
-sub runGenericCommand(){
+sub runGenericCommand
+{
   my $cmd = shift;
   my $js = JSON->new;
   my $z = {
@@ -871,10 +933,11 @@ sub runGenericCommand(){
     utilCmdArgs => " -c '$cmd'",
   };
   $js->pretty();
-  return &postRequest( $URL . 'util/bash', $js->encode( $z ) );
+  return postRequest( $URL . 'util/bash', $js->encode( $z ) );
 }
 
-sub loadMergeFile() {
+sub loadMergeFile
+{
   my $fle = shift;
   my $js = JSON->new;
   my $z = {
@@ -882,10 +945,11 @@ sub loadMergeFile() {
     utilCmdArgs => "merge file $fle",
   };
   $js->pretty();
-  return &postRequest( $URL . 'sys/config', $js->encode( $z ) );
+  return postRequest( $URL . 'sys/config', $js->encode( $z ) );
 }
 
-sub verifyMergeFile() {
+sub verifyMergeFile
+{
   my $fle = shift;
   my $js = JSON->new;
   my $z = {
@@ -893,16 +957,17 @@ sub verifyMergeFile() {
     utilCmdArgs => "merge file $fle verify",
   };
   $js->pretty();
-  my $r = &rawRequest( 'POST', $URL . 'sys/config', $js->encode( $z ) );
+  my $r = rawRequest( 'POST', $URL . 'sys/config', $js->encode( $z ) );
   if ($r->code eq 200) {
     return 'OK';
   } else {
-    my $m = &decode_json( $r->content );
+    my $m = decode_json( $r->content );
     return $m->{'message'};
   }
 }
 
-sub createResource() {
+sub createResource
+{
   my ($t, $n, $part, $r, $mds) = @_;
   my $js = JSON->new;
   $js->pretty();
@@ -918,7 +983,7 @@ sub createResource() {
       apiAnonymous => $buffer,
       fullPath => "/" . $part . "/" . $n,
     };
-    return &postRequest( $URL . 'ltm/rule/', $js->encode( $z ) );
+    return postRequest( $URL . 'ltm/rule/', $js->encode( $z ) );
   }
 
   if ($t eq 'ifile') {
@@ -926,13 +991,13 @@ sub createResource() {
     my $k = new CAudit( $host, $usr, $pass, $cport );
     $k->uploadFile( undef, $r, $transname );
 
-    my $r = &runGenericCommand( "tmsh create sys file ifile /$part/$n source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh create sys file ifile /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
       print $tee "error while creating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
 
     # create ltm link for an ifile
     my $z = {
@@ -942,11 +1007,11 @@ sub createResource() {
       fullPath  => "/$part/$n",
       fileName  => "/$part/$n"
     };
-    my $ck = &existsResource( "ltm/ifile/~$part~$n" );
+    my $ck = existsResource( "ltm/ifile/~$part~$n" );
     if ($ck) {
       return $ck;
     } else {
-      return &postRequest( $URL . 'ltm/ifile/', $js->encode( $z ) );
+      return postRequest( $URL . 'ltm/ifile/', $js->encode( $z ) );
     }
   }
 
@@ -957,13 +1022,13 @@ sub createResource() {
 
     my $dgtype = "string";
     if ($mds eq "ip") { $dgtype = "ip"; }
-    my $r = &runGenericCommand( "tmsh create sys file data-group /$part/$n type $dgtype source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh create sys file data-group /$part/$n type $dgtype source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
       print $tee "error while creating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
 
     # create ltm link for an data-group
     my $z = {
@@ -972,11 +1037,11 @@ sub createResource() {
       partition => $part,
       externalFileName => "/$part/$n"
     };
-    my $ck = &existsResource( "ltm/data-group/external/~$part~$n" );
+    my $ck = existsResource( "ltm/data-group/external/~$part~$n" );
     if ($ck) {
       return $ck;
     } else {
-      return &postRequest( $URL . 'ltm/data-group/external', $js->encode( $z ) );
+      return postRequest( $URL . 'ltm/data-group/external', $js->encode( $z ) );
     }
   }
 
@@ -985,20 +1050,23 @@ sub createResource() {
     my $k = new CAudit( $host, $usr, $pass );
     $k->uploadFile( undef, $r, $transname );
 
-    my $r = &runGenericCommand( "tmsh create sys file external-monitor /$part/$n source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh create sys file external-monitor /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
       print $tee "error while creating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
   }
 
 }
 
+#
+# check if given resource iCR path exists
+# returns 0 or object
 sub existsResource {
   my ($name) = @_;
-  my $r = &query2object( $URL . $name );
+  my $r = query2object( $URL . $name );
   if (defined $r->{'error'}){
     return 0;
   } else {
@@ -1006,7 +1074,10 @@ sub existsResource {
   }
 }
 
-sub updateResource() {
+#
+# update resource: iRule|ifile,...
+sub updateResource
+{
   my ($t, $n, $part, $r) = @_;
   my $js = JSON->new;
   $js->pretty();
@@ -1018,7 +1089,7 @@ sub updateResource() {
     my $z = {
       apiAnonymous => $buffer
     };
-    return &putRequest( $URL . 'ltm/rule/' . $n, $js->encode( $z ) );
+    return putRequest( $URL . 'ltm/rule/' . $n, $js->encode( $z ) );
   }
 
   if ($t eq 'ifile') {
@@ -1026,15 +1097,15 @@ sub updateResource() {
     my $k = new CAudit( $host, $usr, $pass, $cport );
     $k->uploadFile( undef, $r, $transname );
 
-    my $r = &runGenericCommand( "tmsh modify sys file ifile /$part/$n source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh modify sys file ifile /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
-      print $tee "error while updating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      printf $tee "error while updating resource: %s \n", $r->{'commandResult'};
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
 
-    unless ( &existsResource( "ltm/ifile/~$part~$n" ) ) {
+    unless ( existsResource( "ltm/ifile/~$part~$n" ) ) {
       print $tee "error ltm ifile missing!";
       return 0;
     }
@@ -1046,15 +1117,15 @@ sub updateResource() {
     my $k = new CAudit( $host, $usr, $pass, $cport );
     $k->uploadFile( undef, $r, $transname );
 
-    my $r = &runGenericCommand( "tmsh modify sys file data-group /$part/$n source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh modify sys file data-group /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
       print $tee "error while updating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
 
-    unless ( &existsResource( "ltm/data-group/external/~$part~$n" ) ) {
+    unless ( existsResource( "ltm/data-group/external/~$part~$n" ) ) {
       print $tee "error ltm dgroup external link is missing!";
       return 0;
     }
@@ -1065,17 +1136,19 @@ sub updateResource() {
     my $k = new CAudit( $host, $usr, $pass, $cport );
     $k->uploadFile( undef, $r, $transname );
 
-    my $r = &runGenericCommand( "tmsh modify sys file external-monitor /$part/$n source-path file://$transname" );
+    my $r = runGenericCommand( "tmsh modify sys file external-monitor /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
       print $tee "error while updating resource: " . $r->{'commandResult'};
-      &runGenericCommand( "rm $transname" );
+      runGenericCommand( "rm $transname" );
       exit 1;
     }
-    &runGenericCommand( "rm $transname" );
+    runGenericCommand( "rm $transname" );
   }
 
 }
 
+#
+# delete resource
 sub deleteResource {
   my ($t, $n) = @_;
 }
@@ -1083,12 +1156,27 @@ sub deleteResource {
 #
 # verify if specified resource exists in F5's configuration
 sub check_icr_path {
-  my ($def) = @_;
+  my ($def, $opts) = @_;
+  my $ldir = './js-store'; # directory to save backups
+  my $cdir = 'js-templates';
+  if (defined($opts->{'make_local_copy'}) and $opts->{'make_local_copy'}) {
+    print $tee "  . saving resources into js-store \n";
+    if (defined $opts->{'js-store-dir'}) {
+      substr($ldir, 0, 1) = $opts->{'js-store-dir'};
+    } else {
+      substr($ldir, 0, 1) = $wDir;
+    }
+    unless (-e $ldir) {
+      print $tee "  . creating local store: $ldir\n";
+      mkdir $ldir;
+    }
+  }
   if (defined($def->{'type'} and defined($def->{'set'}))) {
-    printf $tee '-'x 110 . "\n";
+    print $tee '-'x 110 . "\n";
     print $tee "  . processing verify category: \x1b[34m$def->{'type'}\x1b[0m\n";
     for my $item (sort @{ $def->{'set'} }) {
       my $verd = "\x1b[31mMISS\x1b[0m";
+      my $extra = '';
       my $pa = "Common";
       if (defined($item->{'partition'})) {
         $pa = $item->{'partition'};
@@ -1096,26 +1184,96 @@ sub check_icr_path {
       if (defined($item->{'app'})) {
         $pa .= "~$item->{'app'}";
       }
-      my $r = &existsResource( "$def->{'type'}/~$pa~$item->{'name'}" );
+      my $r = existsResource( "$def->{'type'}/~$pa~$item->{'name'}" );
       if ($r) {
         $verd = "\x1b[32mFOUND\x1b[0m";
+        if (defined($opts->{'make_local_copy'}) and $opts->{'make_local_copy'}) {
+          # save resource
+          if (defined $r->{'apiAnonymous'}) {
+            open my $fh, ">", "$ldir/$pa" . "~$item->{'name'}" or die "--- Error: Cannot create resource dump file!\n";
+            print $fh $r->{'apiAnonymous'};
+            close($fh);
+          } else {
+            my $js = JSON->new;
+            $js->pretty();
+            $js->canonical();
+            foreach my $z ( qw( defaultsFromReference generation kind selfLink appServiceReference) ) {
+              delete $r->{$z};
+            }
+            my $data = $js->encode($r);
+            open my $fh, ">", "$ldir/$pa" . "~$item->{'name'}" or die "--- Error: Cannot create resource dump file!\n";
+            print $fh $data;
+            close($fh);
+          }
+        }
+        if (defined($opts->{"base_location"})) {
+          if (defined $opts->{'js-template-dir'}) {
+            $cdir = $opts->{'js-template-dir'};
+          }
+          my $localFile = $opts->{"base_location"} . "/" . "$cdir/$pa~" . $item->{'name'};
+          if (-e $localFile) {
+            # if template exists than compare
+            my $l_ssha = get_file_sha1( $localFile, '' );
+            my $buffer = '';
+            if (defined $r->{'apiAnonymous'}) {
+              $buffer = $r->{'apiAnonymous'};
+            } else {
+              my $js = JSON->new;
+              $js->pretty();
+              $js->canonical();
+              foreach my $z ( qw( defaultsFromReference generation kind selfLink appServiceReference) ) { delete $r->{$z}; }
+              $buffer = $js->encode($r);
+            }
+            my $r_ssha = sha1_hex( $buffer );
+            if ($r_ssha eq $l_ssha) {
+              $extra = "(verification::positive hash:$r_ssha)";
+            } else {
+              $extra = "(verification::failed hash local:$l_ssha remote:$r_ssha)";
+              if (defined $opts->{'verify_diff'} and $opts->{'verify_diff'}) {
+                my $fsd = get_file_content( $localFile );
+                my $df = diff \$buffer, \$fsd, { STYLE => "Unified" };
+                my @lines = split /[\n]/, $df;
+                foreach my $l (@lines) {
+                  if ($l =~ /^\-/) {
+                    print $tee $l . "\n";
+                  } elsif ($l =~ /^\@\@/) {
+                    if ($^O eq "MSWin32") {
+                      printf $tee "%s\n", $l;
+                    } else {
+                      printf $tee "\033[35m%s\033[0m\n", $l;
+                    }
+                  } else {
+                    if ($^O eq "MSWin32") {
+                      printf $tee "%s\n", $l;
+                    } else {
+                      printf $tee "\033[33m%s\033[0m\n", $l;
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+             printf ">>> not found: lc: %s \n", $localFile;
+          }
+        }
       }
       if (defined($item->{'app'})) {
-        printf $tee "  %-32s: [%s] \n", "$item->{'app'}/$item->{'name'}", $verd;
+        printf $tee "  %-32s: [%s] %s\n", "$item->{'app'}/$item->{'name'}", $verd, $extra;
       } else {
-        printf $tee "  %-32s: [%s] \n", $item->{'name'}, $verd;
+        printf $tee "  %-32s: [%s] %s\n", $item->{'name'}, $verd, $extra;
       }
     }
-    printf $tee '-'x 110 . "\n";
+    print $tee '-'x 110 . "\n";
   } else {
     print $tee "error while processing verification set: ";
     exit 1;
   }
 }
 
-sub get_running_software() {
+sub get_running_software
+{
   my %p;
-  my $r = &query2object( $URL . 'sys/software/volume');
+  my $r = query2object( $URL . 'sys/software/volume');
   foreach my $r ( @{ $r->{'items'} } ) {
     if ($r->{'active'}) {
       $p{'active volume'}  = $r->{'name'};
@@ -1170,8 +1328,8 @@ sub batch_mode {
 
   # base location fixup for relative paths
   if (defined $j->{'options'}{'base_location'}) {
-    if ($j->{'options'}{'base_location'} eq "./") {
-      $j->{'options'}{'base_location'} = $rundir;
+    if (substr($j->{'options'}{'base_location'}, 0, 2) eq "./") {
+      substr($j->{'options'}{'base_location'}, 0, 1) = $rundir;
     }
   }
 
@@ -1185,14 +1343,14 @@ sub batch_mode {
   #verify system matches description
   if (defined ($j->{'system-ip'}) and ($j->{'system-ip'} ne "*")) {
     if ($host !~ /$j->{'system-ip'}/) {
-      printf $tee "(error) management IP address does not match\n";
+      print $tee "(error) management IP address does not match\n";
       return;
     }
   }
   my $rsw = $srun{'soft version'} . "." . $srun{'soft build'};
   if (defined ($j->{'sw-version'}) and ($j->{'sw-version'} ne "*")) {
     if ($rsw !~ /$j->{'sw-version'}/) {
-      printf $tee "(error) running software: $rsw does not match requested: $j->{'sw-version'}\n";
+      print $tee "(error) running software: $rsw does not match requested: $j->{'sw-version'}\n";
       return;
     }
   }
@@ -1234,9 +1392,9 @@ sub batch_mode {
                 $kx = $at[0];
                 $ksrc = $at[1];
               } else {
-                $ksrc = &parseFileToken($kx);
+                $ksrc = parseFileToken($kx);
               }
-              printf $tee "+-- [step: $step] uploading object: $kx from $ksrc\n";
+              print $tee "+-- [step: $step] uploading object: $kx from $ksrc\n";
               if (defined $j->{'options'}{'base_location'}){
                 my $k = new CAudit( $host, $usr, $pass, $cport );
                 $k->uploadFile( $j->{'options'}, $ksrc, $kx );
@@ -1245,52 +1403,52 @@ sub batch_mode {
           }
         }
         case 'CSET' {
-          printf $tee "+-- [step: $otgt[0] command set execute: $otgt[1]\n";
+          print $tee "+-- [step: $otgt[0] command set execute: $otgt[1]\n";
           if ((defined $j->{'commandset'}) && (defined $j->{'commandset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'commandset'}{$otgt[1]} }) {
               print $tee "   . executing command: $kx\n";
-              my $r = &runGenericCommand( $kx );
+              my $r = runGenericCommand( $kx );
               if (defined $r->{'commandResult'}){
-                print $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
+                printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
               }
             }
           }
         }
         case 'RSET' {
-          printf $tee "+-- [step: $step] updating a set of irules: $otgt[1]\n";
+          print $tee "+-- [step: $step] updating a set of irules: $otgt[1]\n";
           if ((defined $j->{'ruleset'}) && (defined $j->{'ruleset'}{$otgt[1]})) {
-            &load_irules( $j, $otgt[1] );
+            load_irules( $j, $otgt[1] );
           }
         }
         case 'MSET' {
-          printf $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n";
+          print $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n";
           if ((defined $j->{'mergeset'}) && (defined $j->{'mergeset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'mergeset'}{$otgt[1]} }) {
               if (defined $j->{'options'}{'base_location'}) {
                 print $tee "  . \x1b[34mmerging file: $kx\x1b[0m\n";
                 my $k = new CAudit( $host, $usr, $pass, $cport );
-                $k->uploadFile( $j->{'options'}, &parseFileToken($kx), $kx );
+                $k->uploadFile( $j->{'options'}, parseFileToken($kx), $kx );
               }
               if (defined($j->{'options'}{'verify_merge_sets'})) {
-                my $r = &verifyMergeFile( $kx );
+                my $r = verifyMergeFile( $kx );
                 if ($r ne 'OK') {
                   printf $tee "-- merge stopped due to a verification failure: \033[31m%s\033[0m\n", $r;
                   exit 1;
                 } else {
-                  &loadMergeFile( $kx );
+                  loadMergeFile( $kx );
                 }
               } else {
-                &loadMergeFile( $kx );
+                loadMergeFile( $kx );
               }
             }
           }
         }
         case 'VERIFY_SET' {
-          printf $tee "+-- [step: $step] processing verification set: $otgt[1]\n";
+          print $tee "+-- [step: $step] processing verification set: $otgt[1]\n";
           if ((defined $j->{'verifyset'}) && (defined $j->{'verifyset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'verifyset'}{$otgt[1]} }) {
               # kx is an object: type - icr path,  set - list of items to check
-              &check_icr_path( $kx );
+              check_icr_path( $kx, $j->{'options'} );
             }
           }
         }
@@ -1303,17 +1461,17 @@ sub batch_mode {
     # normal targets
     switch ($step) {
       case 'COMPARE_DBSET' {
-        printf $tee "+-- [step: $step] comparing sys variables\n";
-        &report_dbvars( $j->{'dbvars'} );
+        print $tee "+-- [step: $step] comparing sys variables\n";
+        report_dbvars( $j->{'dbvars'} );
       }
       case 'COMPARE_RULES' {
-        printf $tee "+-- [step: $step] comparing irule codebase\n";
-        &report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j);
+        print $tee "+-- [step: $step] comparing irule codebase\n";
+        report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j);
       }
       case 'MAKE_UCS' {
         # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
         # ucs files created via REST is not available to iControl
-        printf $tee "+-- [step: $step] make system archive\n";
+        print $tee "+-- [step: $step] make system archive\n";
          #my $js = JSON->new;
          my $z = {
            command => "save",
@@ -1321,29 +1479,29 @@ sub batch_mode {
          };
          if (defined $j->{'options'}{'ucs-file-name'}) {
            $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
-           printf $tee "+-- setting ucs name to: $z->{'name'}";
+           print $tee "+-- setting ucs name to: $z->{'name'}";
          }
          #$js->pretty();
-         #&postRequest( $URL . 'sys/ucs', $js->encode( $z ) );
+         #postRequest( $URL . 'sys/ucs', $js->encode( $z ) );
          my $k = new CAudit( $host, $usr, $pass, $cport );
          $k->createUcs( $z->{name} );
-         printf $tee "  . ucs saved into: $z->{name}\n";
+         print $tee "  . ucs saved into: $z->{name}\n";
 
          if ($wDir ne '') {
             $k->downloadResource('ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
          } else {
-           printf $tee "+-- note: working dir is not set, we do not download ucs!\n";
+           print $tee "+-- note: working dir is not set, we do not download ucs!\n";
          }
          if ((defined $j->{'options'}{'remove_created_ucs'}) &&
              ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
            # cleanup
-           printf $tee "  . removing ucs we have created\n";
+           print $tee "  . removing ucs we have created\n";
            $k->deleteResource( $z->{name}, 'ucs' );
-           #&runGenericCommand( "tmsh delete sys ucs $z->{name}");
+           #runGenericCommand( "tmsh delete sys ucs $z->{name}");
          }
       }
       case 'MAKE_SCF' {
-        printf $tee "+-- [step: $step] make system scf archive\n";
+        print $tee "+-- [step: $step] make system scf archive\n";
          my $js = JSON->new;
          my $fname = "migrate-auto-${host_name}-${tmp_stmp}.scf";
          my $z = {
@@ -1357,45 +1515,45 @@ sub batch_mode {
          };
 
          $js->pretty();
-         my $res = &postRequest( $URL . 'sys/config', $js->encode( $z ) );
-         printf $tee ":: saving files to: $wDir\n";
+         my $res = postRequest( $URL . 'sys/config', $js->encode( $z ) );
+         print $tee ":: saving files to: $wDir\n";
 
          my $k = new CAudit( $host, $usr, $pass, $cport );
          if ($wDir ne '') {
             $k->downloadResource('file', "/var/local/scf/" . $fname, $wDir . $fname );
             $k->downloadResource('file', "/var/local/scf/" . $fname . ".tar", $wDir . $fname . ".tar" );
          } else {
-           printf $tee "+-- note: working dir is not set, we do not download scf!\n";
+           print $tee "+-- note: working dir is not set, we do not download scf!\n";
          }
          if ((defined $j->{'options'}{'remove_created_ucs'}) && ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
            # cleanup
-           printf $tee "  . removing scf files we have created\n";
+           print $tee "  . removing scf files we have created\n";
            $k->deleteResource( "/var/local/scf/" . $fname, 'file');
            $k->deleteResource( "/var/local/scf/" . $fname . ".tar", 'file' );
          }
       }
       case 'LOAD_RULES' {
-         printf $tee "+-- [step: $step] load iRules on a system\n";
-         &load_irules( $j );
+         print $tee "+-- [step: $step] load iRules on a system\n";
+         load_irules( $j );
       }
       case 'UNBIND_VS' {
-         printf $tee "+-- [step: $step] unbind iRules from vs on a system\n";
+         print $tee "+-- [step: $step] unbind iRules from vs on a system\n";
          my $z = {
            rules => []
          };
          foreach my $rs ( @{ $j->{'unbindvs'}} ) {
            my $js = JSON->new;
            $js->pretty();
-           printf $tee "  . updating virtual server: $rs\n";
+           print $tee "  . updating virtual server: $rs\n";
            if (index($rs,"/") > -1){
              $rs =~ tr/\//~/;
            }
            #print Dumper( $z );
-           &putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+           putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
          }
       }
       case 'REBIND_VS' {
-         printf $tee "+-- [step: $step] rebind iRules on a virtual server\n";
+         print $tee "+-- [step: $step] rebind iRules on a virtual server\n";
          my $z = {
            rules => []
          };
@@ -1413,29 +1571,29 @@ sub batch_mode {
                }
              }
            }
-           printf $tee "  . updating virtual server: $rs\n";
+           print $tee "  . updating virtual server: $rs\n";
            if (index($rs,"/") > -1){
              $rs =~ tr/\//~/;
            }
            #print Dumper( $z );
            if ($srun{'soft version'} =~ /^12/) {
-             &patchRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+             patchRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
            } else {
-             &putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
+             putRequest( $URL . 'ltm/virtual/' . $rs, $js->encode( $z ) );
            }
          }
       }
       case 'DELETIONS' {
-         printf $tee "+-- [step: $step] delete specified resources\n";
+         print $tee "+-- [step: $step] delete specified resources\n";
          # remove priorities first
          foreach my $r (sort keys %{ $j->{'delete'} }) {
            if ($j->{'delete'}{$r}[1] == 1) {
              my $prt = $j->{delete}{$r}[2] || "Common";
              printf $tee "  . removing priority object: %-52s  [", "/$prt/$r";
-             if (&deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
-               printf $tee "SUCCESS]\n";
+             if (deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
+               print $tee "SUCCESS]\n";
              } else {
-               printf $tee "FAILED]\n";
+               print $tee "FAILED]\n";
              }
            }
          }
@@ -1444,21 +1602,21 @@ sub batch_mode {
            if ($j->{'delete'}{$r}[1] != 1) {
              my $prt = $j->{delete}{$r}[2] || "Common";
              printf $tee "  . removing normal object: %-52s  [", "/$prt/$r";
-             if (&deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
-               printf $tee "SUCCESS]\n";
+             if (deleteRequest( $URL . $j->{'delete'}{$r}[0] . "/~$prt~" . $r ) == 0) {
+               print $tee "SUCCESS]\n";
              } else {
-               printf $tee "FAILED]\n";
+               print $tee "FAILED]\n";
              }
            }
          }
          # done
       }
       case 'RECERT' {
-        printf $tee "+-- [step: $step] recertify iRules\n";
+        print $tee "+-- [step: $step] recertify iRules\n";
         my $crt = $j->{'options'}{'signing_key'};
-        printf $tee "+-- using key: $crt\n";
+        print $tee "+-- using key: $crt\n";
         foreach my $r (sort keys %{ $j->{'rules'} }) {
-          printf $tee "  . processing iRule: $r\n";
+          print $tee "  . processing iRule: $r\n";
           my $js = JSON->new;
           my $z = {
             command => 'generate',
@@ -1471,13 +1629,13 @@ sub batch_mode {
             'signing-key' => $crt
           };
           $js->pretty();
-          &postRequest( $URL . "ltm/rule", $js->encode( $z ));
+          postRequest( $URL . "ltm/rule", $js->encode( $z ));
         }
       }
       case 'RENAME' {
-        printf $tee "+-- [step: $step] renaming objects\n";
+        print $tee "+-- [step: $step] renaming objects\n";
         foreach my $rc (sort keys %{ $j->{'rename'} }) {
-          printf $tee "  . renaming $rc --> $j->{rename}{$rc}\n";
+          print $tee "  . renaming $rc --> $j->{rename}{$rc}\n";
           my $js = JSON->new;
           my $z = {
             command => 'mv',
@@ -1485,16 +1643,16 @@ sub batch_mode {
             target  => $j->{'rename'}{$rc},
           };
           $js->pretty();
-          &postRequest( $URL . "ltm/virtual", $js->encode( $z ));
+          postRequest( $URL . "ltm/virtual", $js->encode( $z ));
         }
       }
       case 'ABORT' {
-        printf $tee "+-- [step: $step] aborting batch\n";
+        print $tee "+-- [step: $step] aborting batch\n";
         exit;
       }
       case 'VERIFY' {
-        printf $tee "+-- [step: $step] verifying batch feasibility\n";
-        printf $tee "  . veryfying existence of objects: vs\n";
+        print $tee "+-- [step: $step] verifying batch feasibility\n";
+        print $tee "  . veryfying existence of objects: vs\n";
         my %oDone = qw||;
         #
         # bind rules (only virtuals)
@@ -1511,11 +1669,11 @@ sub batch_mode {
           if (index($ob,"/") > -1){
             $ob =~ tr/\//~/;
           }
-          if (&query2object( $URL . "ltm/virtual/" . $ob) == 2){
-             printf $tee  "\[FAILED]\n -- ABORTED -- \n";
+          if (query2object( $URL . "ltm/virtual/" . $ob) == 2){
+             print $tee  "\[FAILED]\n -- ABORTED -- \n";
              exit;
            } else {
-             printf $tee "\[SUCESS]\n";
+             print $tee "\[SUCESS]\n";
              $oDone{$ob} = 1;
            }
         }
@@ -1523,81 +1681,81 @@ sub batch_mode {
         # unbinding rules
         foreach my $ob (@{ $j->{unbindvs} }) {
           if (not defined $oDone{$ob}) {
-            printf $tee "   -> $ob    ";
+            print $tee "   -> $ob    ";
             if (index($ob,"/") > -1){
               $ob =~ tr/\//~/;
             }
-            if (&query2object( $URL . "ltm/virtual/" . $ob) == 2){
-               printf $tee  "\[FAILED]\n -- ABORTED --\n";
+            if (query2object( $URL . "ltm/virtual/" . $ob) == 2){
+               print $tee  "\[FAILED]\n -- ABORTED --\n";
                exit;
              } else {
-               printf $tee "\[SUCESS]\n";
+               print $tee "\[SUCESS]\n";
              }
           }
         }
         #
         # deleted objects
-        printf $tee "  . looking for deleted objects \n";
+        print $tee "  . looking for deleted objects \n";
         foreach my $ob (sort keys %{ $j->{delete} }) {
-           printf $tee "   -> $ob    ";
+           print $tee "   -> $ob    ";
            my $prt = $j->{delete}{$ob}[2] || "Common";
-           if (&query2object( $URL . $j->{delete}{$ob}[0] . "/~$prt~" . $ob) == 2){
-             printf $tee "\[NOT FOUND]\n -- ABORTED -- \n";
+           if (query2object( $URL . $j->{delete}{$ob}[0] . "/~$prt~" . $ob) == 2){
+             print $tee "\[NOT FOUND]\n -- ABORTED -- \n";
              exit;
            } else {
-             printf $tee "\[SUCESS]\n";
+             print $tee "\[SUCESS]\n";
            }
         }
       }
       case 'CONFIRM' {
          if (defined $j->{'confirm-msg'}) {
            if ($cindex) {
-             printf $tee ">>>>> $j->{'confirm-msg'}[$cindex - 1]";
+             print $tee ">>>>> $j->{'confirm-msg'}[$cindex - 1]";
            } else {
-             printf $tee ">>>>> $j->{'confirm-msg'}[$confNo]";
+             print $tee ">>>>> $j->{'confirm-msg'}[$confNo]";
              $confNo++;
            }
          } else {
-           printf $tee ">>>>> Please confirm to proceed ....";
+           print $tee ">>>>> Please confirm to proceed ....";
          }
          readline;
       }
       case 'SAVE' {
-        printf $tee "+-- [step: $step] saving running configuration\n";
-        &saveRunConfig;
+        print $tee "+-- [step: $step] saving running configuration\n";
+        saveRunConfig;
       }
       case 'SYNC' {
-        printf $tee "+-- [step: $step] syncing cluster configuration\n";
+        print $tee "+-- [step: $step] syncing cluster configuration\n";
         if (defined $props{'failover cluster'}) {
-          printf $tee "  . synchronizing configuration of the cluster: $props{'failover cluster'}...\n";
-          &syncCluster( $props{'failover cluster'} );
+          print $tee "  . synchronizing configuration of the cluster: $props{'failover cluster'}...\n";
+          syncCluster( $props{'failover cluster'} );
         }
       }
       case 'LOADTMSH' {
         if (defined $j->{'tmsh-merge'}) {
-          printf $tee "+-- [step: $step] merging tmsh config file: $j->{'tmsh-merge'}[$tmsh_mg]\n";
+          print $tee "+-- [step: $step] merging tmsh config file: $j->{'tmsh-merge'}[$tmsh_mg]\n";
           if (defined $j->{'options'}{'base_location'}){
             my $k = new CAudit( $host, $usr, $pass, $cport );
-            $k->uploadFile( $j->{'options'}, &parseFileToken($j->{'tmsh-merge'}[$tmsh_mg]), $j->{'tmsh-merge'}[$tmsh_mg] );
+            $k->uploadFile( $j->{'options'}, parseFileToken($j->{'tmsh-merge'}[$tmsh_mg]), $j->{'tmsh-merge'}[$tmsh_mg] );
           }
-          my $r = &loadMergeFile( $j->{'tmsh-merge'}[$tmsh_mg] );
+          my $r = loadMergeFile( $j->{'tmsh-merge'}[$tmsh_mg] );
           $tmsh_mg++;
         }
       }
       case 'UPLOAD' {
         if (defined $j->{'upload'}) {
-          printf $tee "+-- [step: $step] uploading object: $j->{'upload'}[$file_mg]\n";
+          print $tee "+-- [step: $step] uploading object: $j->{'upload'}[$file_mg]\n";
           if (defined $j->{'options'}{'base_location'}){
             my $k = new CAudit( $host, $usr, $pass, $cport );
-            $k->uploadFile( $j->{'options'}, &parseFileToken($j->{'upload'}[$file_mg]), $j->{'upload'}[$file_mg] );
+            $k->uploadFile( $j->{'options'}, parseFileToken($j->{'upload'}[$file_mg]), $j->{'upload'}[$file_mg] );
           }
           $file_mg++;
         }
       }
       case 'COMMAND' {
         if (defined $j->{'command'}) {
-          printf $tee "+-- [step: $step] execute command: $j->{'command'}[$cmd_mg]\n";
-          my $r = &runGenericCommand( $j->{'command'}[$cmd_mg] );
+          print $tee "+-- [step: $step] execute command: $j->{'command'}[$cmd_mg]\n";
+          my $r = runGenericCommand( $j->{'command'}[$cmd_mg] );
           if (defined $r->{'commandResult'}){
             printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
           }
@@ -1606,26 +1764,26 @@ sub batch_mode {
       }
       case 'LOAD_IFILES' {
         if ( (defined $j->{'ifile'}) && (defined $j->{'options'}{'base_location'}) ) {
-          printf $tee "+-- [step: $step] uploading ifiles\n";
+          print $tee "+-- [step: $step] uploading ifiles\n";
           foreach my $fl (sort keys %{ $j->{'ifile'} }) {
-            printf $tee "  ifile: $fl\n";
+            print $tee "  ifile: $fl\n";
             my $pa = 'Common';
             if (defined $j->{'ifile'}{$fl}{'partition'}) {
               $pa = $j->{'ifile'}{$fl}{'partition'};
             }
-            if (&existsResource( "sys/file/ifile/~$pa~$fl")) {
-              &updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'});
+            if (existsResource( "sys/file/ifile/~$pa~$fl")) {
+              updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'});
             } else {
-              &createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'}, '');
+              createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'}, '');
             }
           }
         }
       }
       case 'LOAD_DG' {
         if ( (defined $j->{'datagroup'}) && (defined $j->{'options'}{'base_location'}) ) {
-          printf $tee "+-- [step: $step] uploading external data groups\n";
+          print $tee "+-- [step: $step] uploading external data groups\n";
           foreach my $fl (sort keys %{ $j->{'datagroup'} }) {
-            printf $tee "  datagroup: $fl\n";
+            print $tee "  datagroup: $fl\n";
             my $pa = 'Common';
             my $tp = "string";
             if (defined $j->{'datagroup'}{$fl}{'partition'}) {
@@ -1634,36 +1792,36 @@ sub batch_mode {
             if (defined $j->{'datagroup'}{$fl}{'type'}) {
               $tp = $j->{'datagroup'}{$fl}{'type'};
             }
-            if (&existsResource( "sys/file/data-group/~$pa~$fl")) {
-              &updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'});
+            if (existsResource( "sys/file/data-group/~$pa~$fl")) {
+              updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'});
             } else {
-              &createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'}, $tp);
+              createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'}, $tp);
             }
           }
         }
       }
       case 'LOAD_MONITORS' {
         if ( (defined $j->{'monitor'}) && (defined $j->{'options'}{'base_location'}) ) {
-          printf $tee "+-- [step: $step] uploading external monitors\n";
+          print $tee "+-- [step: $step] uploading external monitors\n";
           foreach my $fl (sort keys %{ $j->{'monitor'} }) {
-            printf $tee "  external monitor: $fl\n";
+            print $tee "  external monitor: $fl\n";
             my $pa = 'Common';
             if (defined $j->{'monitor'}{$fl}{'partition'}) {
               $pa = $j->{'monitor'}{$fl}{'partition'};
             }
-            if (&existsResource( "sys/file/external-monitor/~$pa~$fl")) {
-              &updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'});
+            if (existsResource( "sys/file/external-monitor/~$pa~$fl")) {
+              updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'});
             } else {
-              &createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'}, '');
+              createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'}, '');
             }
           }
         }
       }
       case 'DOWNLOAD' {
         if ( (defined $j->{'retrieve'}) && (defined $j->{'options'}{'store_location'}) ) {
-          printf $tee "+-- [step: $step] fetching files from remote system\n";
+          print $tee "+-- [step: $step] fetching files from remote system\n";
           foreach my $fl (sort keys %{ $j->{'retrieve'} }) {
-            printf $tee "  . resource from a location: $j->{'retrieve'}{$fl}\n";
+            print $tee "  . resource from a location: $j->{'retrieve'}{$fl}\n";
             my $k = new CAudit( $host, $usr, $pass, $cport );
             $k->downloadResource( 'file', $j->{'retrieve'}{$fl}, $j->{'options'}{'store_location'} . '/' . $fl );
           }
@@ -1692,19 +1850,31 @@ sub get_file_sha1
 }
 
 #
+# get contents of a file into a buffer
+sub get_file_content
+{
+  my ($fname) = @_;
+  open my $fh, "<", $fname or die "--- Error opening resource file $fname!\n";
+  read $fh, my $buffer, -s $fh;
+  close $fh;
+
+  return $buffer;
+}
+
+#
 # load irules onto F5 device
 sub load_irules
 {
   my $c = shift;
   my $f = shift;
-  my %rls = &checkRules;
+  my %rls = checkRules();
   my @rs;
 
   # load file into buffer
   my %rules = ();
-  
+
   if ($f and $f ne '') {
-    printf $tee "  . load_rules:: using ruleset definition: $f\n";
+    print $tee "  . load_rules:: using ruleset definition: $f\n";
     %rules  = %{ $c->{'ruleset'}{$f} };
   } else {
     %rules = %{ $c->{'rules'} };
@@ -1723,17 +1893,17 @@ sub load_irules
 
   foreach my $rl ( @rs ) {
     my $fhss = "$c->{'options'}{rules_location}/$rl.tcl";
-    my $fhss_sha = &get_file_sha1( $fhss, 'iRule' );
+    my $fhss_sha = get_file_sha1( $fhss, 'iRule' );
     if (defined $rls{$rl}) {
       if ($fhss_sha ne $rls{$rl}{'hash'}) {
-        printf $tee "  . \x1b[32mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
-        &updateResource('rule', $rl, 'Common', $fhss);
+        print $tee "  . \x1b[32mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
+        updateResource('rule', $rl, 'Common', $fhss);
       } else {
-        printf $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
+        print $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
       }
     } else {
-      printf $tee "  . \x1b[33minstalling rule: $rl\x1b[0m <hash $fhss_sha>\n";
-      &createResource('rule', $rl, 'Common', $fhss, '');
+      print $tee "  . \x1b[33minstalling rule: $rl\x1b[0m <hash $fhss_sha>\n";
+      createResource('rule', $rl, 'Common', $fhss, '');
     }
   }
 }
@@ -1744,12 +1914,12 @@ sub load_irules
 # ISTATS generic report
 sub report_istats_generic
 {
-  my $r = &runGenericCommand("istats dump");
+  my $r = runGenericCommand("istats dump");
   if (defined( $r->{'commandResult'})) {
-    printf $tee "+-- Report::Istats\n";
-    printf $tee '-'x 90 . "\n";
+    print $tee "+-- Report::Istats\n";
+    print $tee '-'x 90 . "\n";
     printf $tee " %12s | %12s | %32s | %-20s\n",'Module','Range','Variable', 'Value';
-    printf $tee '-'x 90 . "\n";
+    print $tee '-'x 90 . "\n";
     foreach my $ln ( split "\n", $r->{commandResult} ) {
       if ($ln =~ /^\s+\[\s*?(.+?)\s*?\]\[\s*?(.+?)\s*?\] = (.+?) .*/) {
         my ($code,$scope) = split('=', $1);
@@ -1758,9 +1928,9 @@ sub report_istats_generic
         printf $tee " %12s | %12s | %32s | %-20s\n",$code,$scope,$var,$val;
       }
     }
-    printf $tee '-'x 90 . "\n";
+    print $tee '-'x 90 . "\n";
   } else {
-    printf $tee "-- report failed.\n"
+    print $tee "-- report failed.\n"
   }
 }
 #
@@ -1778,8 +1948,8 @@ sub ctrim
 # compare DB variables
 sub report_dbvars {
   my ($defs) = @_;
-  
-  my $dbs = &query2object($URL . 'sys/db');
+
+  my $dbs = query2object($URL . 'sys/db');
   print $tee '-' x 120 . "\n";
   printf " %48s | %24s | %24s | %8s \n", 'Variable', 'Wanted', 'Check', 'Status';
   print $tee '-' x 120 . "\n";
@@ -1803,9 +1973,9 @@ sub report_dbvars {
 sub report_irules
 {
    my ($base, $diff, $j) = @_;
-   
+
    if ($base eq '') {
-     printf $tee "-- cannot compare iRule without a baseline directory <base>\n";
+     print $tee "-- cannot compare iRule without a baseline directory <base>\n";
      return;
    }
 
@@ -1819,11 +1989,11 @@ sub report_irules
    my @files = grep { /^.+?\.tcl$/ } readdir $dir;
    closedir $dir;
 
-   my $rules = &query2object( $URL . 'ltm/rule');
+   my $rules = query2object( $URL . 'ltm/rule');
    my %failed = qw||;
 
    printf $tee " %50s\tStatus\n", "Rule name";
-   printf $tee '-' x 100 . "\n";
+   print $tee '-' x 100 . "\n";
 
    $ndir = $#files;
 
@@ -1843,7 +2013,7 @@ sub report_irules
      read $fh, my $buffer, -s $fh;
      close $fh;
      # remove newline
-     chomp($buffer); 
+     chomp($buffer);
      my $oh = sha1_hex( $buffer );
 
      $f =~ s/.tcl//;
@@ -1879,11 +2049,11 @@ sub report_irules
      }
 
    }
-   printf $tee '-' x 100 . "\n";
+   print $tee '-' x 100 . "\n";
    printf $tee ". irules found in reference directory:    %d\n", $ndir;
    printf $tee ". irules declared in a batch and checked: %d\n", $nset if $nset > 0;
    printf $tee ". stats: OK: %d, DIFF: %d, MISS: %d \n", $ngod, $ndif, $nmis;
-   printf $tee '-' x 100 . "\n";
+   print $tee '-' x 100 . "\n";
 
    if ($diff eq "true") {
      foreach my $d (sort keys %failed) {
@@ -1912,5 +2082,11 @@ sub report_irules
        }
      }
    }
+}
+#
+# Custom reports
+sub run_custom_report
+{
+  print ". not implemented\n";
 }
 # EOF

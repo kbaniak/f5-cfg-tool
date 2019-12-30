@@ -21,7 +21,8 @@ my $ODEFS = {
  "report_mode"      => { usage => "modify report output to batch friendly" },
  "report_name"      => { usage => "modify report output by addinf parameter to a report function" },
  "mrf_sip"          => { usage => "dump mrf sip configuration to excel file" },
- "respOnly"         => { usage => "when executing command -x, print only the command result" }
+ "respOnly"         => { usage => "when executing command -x, print only the command result" },
+ "save_query_result" => { usage => "save iCR query results in a cache" }
 };
 
 my $BDEFS = {
