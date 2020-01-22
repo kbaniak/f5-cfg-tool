@@ -26,6 +26,23 @@ cd f5-cfg-tool
 ./f5-cfg -t 1.1.1.1 -u admin -p admin -b /path/batch_file.json -Z rules
 ```
 
+## Directories
+
+The f5-cfg uses the following rules to interpret directories and dependent files/resources location:
+
+* standard invocation mode
+  - working-directory: this is a standard working directory for f5-cfg, a place where all downloads will be stored
+    working direcory may be given as `-w option` or otherwise it will be automatically set to a running directory
+
+* batch mode
+  In a batch mode we control directories using options sesion in JSON file describing batch actions. 
+  All options may be relative to a current running directory. In such a case they shall be prefixed with `./`.
+  Those options include:
+  - working-directory {mandatory} - this is a working directory for downloads
+  - base_location {mandatory} - this is a location to search for uploaded resources
+  - rules_location {mandatory} - this is a location containing iRules for a batch
+  - search_path {optional} - this is a list of directories relative to base_location, where resources will be searched for
+
 ## Batch files
 
 Batch files are used to specify automated tasks to be executed during F5 configuration or maintenance.

@@ -46,11 +46,13 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.0.9';
+my $version = '1.1.0';
 
-# --------- DEBUG vars -----------------
+# --------- DEB -----------------
+my $debug_vs = 0;
+my $debug_prof = 0;
 my $debug_rules = 0;
-my $db_cr = 0;
+# --------- DEB -----------------
 
 # -- hack needed to support F5 iCR API transactions
 sub PATCH  { _simple_req('PATCH',  @_); }
@@ -195,7 +197,6 @@ update_host( $host );
 my $remove_temp = 1;
 if ($opts{'r'}) { $remove_temp = 0; }
 if ($wDir ne '') {
-  $wDir .= '/';
   if (! -e $wDir) {
     printf $tee "!-- working directory not found: $wDir\n";
     exit;
@@ -205,9 +206,10 @@ if ($wDir ne '') {
 }
 # -----------------------------------------------
 # Debug settings
-if ($opts{'d'}) {
-  # enable debug
-  $debug_rules = 1;
+my $db_cr = 0;
+if ($opts{'d'}){
+  # enable all kinds of debug messages
+  $debug_vs = $debug_prof = 1;
   $db_cr = 1;
 }
 #------------------------------------------------
@@ -389,9 +391,9 @@ if ( $opts{'A'} ) {
   close($fh);
 
   if ($^O eq "MSWin32") {
-    `tar -cf $rundir/$wDir$d.tar $d/`;
+    `tar -cf $rundir/$wDir/$d.tar $d/`;
   } else {
-    `tar -cf $rundir/$wDir$d.tar $d/`;
+    `tar -cf $rundir/$wDir/$d.tar $d/`;
   }
   if ($remove_temp) {
     print $tee "... trying to remove directory";
@@ -1320,11 +1322,15 @@ sub batch_mode {
   # options parsing
   if (defined $j->{'options'}{'working-directory'}) {
     $wDir = $j->{'options'}{'working-directory'};
-    if ($wDir eq "./") {
-      $wDir = $rundir . "/";
-    } else {
-      $wDir .= '/';
+    if ($wDir eq '') {
+      # we cannot continue at that moment
+      die "-f- working directory is empty!"
     }
+    if (substr($wDir, 0, 2) eq "./") {
+      $wDir = $rundir . "/";
+      substr($wDir, 0, 1) = $rundir;
+    }
+    $wDir .= '/';
   }
 
   # base location fixup for relative paths
@@ -1897,7 +1903,7 @@ sub load_irules
     my $fhss_sha = get_file_sha1( $fhss, 'iRule' );
     if (defined $rls{$rl}) {
       if ($fhss_sha ne $rls{$rl}{'hash'}) {
-        print $tee "  . \x1b[32mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
+        print $tee "  . \x1b[34mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
         updateResource('rule', $rl, 'Common', $fhss);
       } else {
         print $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
