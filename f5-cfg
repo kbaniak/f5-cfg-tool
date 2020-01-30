@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.1.0';
+my $version = '1.1.1';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -207,8 +207,8 @@ if ($wDir ne '') {
 # -----------------------------------------------
 # Debug settings
 my $db_cr = 0;
-if ($opts{'d'}){
-  # enable all kinds of debug messages
+if ($opts{'d'}) {
+  # enable all kinds of debug
   $debug_vs = $debug_prof = 1;
   $db_cr = 1;
 }
@@ -1167,7 +1167,7 @@ sub check_icr_path {
     if (defined $opts->{'js-store-dir'}) {
       substr($ldir, 0, 1) = $opts->{'js-store-dir'};
     } else {
-      substr($ldir, 0, 1) = $wDir;
+      substr($ldir, 0, 2) = $wDir;
     }
     unless (-e $ldir) {
       print $tee "  . creating local store: $ldir\n";
@@ -1213,7 +1213,7 @@ sub check_icr_path {
           if (defined $opts->{'js-template-dir'}) {
             $cdir = $opts->{'js-template-dir'};
           }
-          my $localFile = $opts->{"base_location"} . "/" . "$cdir/$pa~" . $item->{'name'};
+          my $localFile = $opts->{"base_location"} . "$cdir/$pa~" . $item->{'name'};
           if (-e $localFile) {
             # if template exists than compare
             my $l_ssha = get_file_sha1( $localFile, '' );
@@ -1327,10 +1327,10 @@ sub batch_mode {
       die "-f- working directory is empty!"
     }
     if (substr($wDir, 0, 2) eq "./") {
-      $wDir = $rundir . "/";
       substr($wDir, 0, 1) = $rundir;
     }
     $wDir .= '/';
+    $wDir =~ s/\/\//\//g;
   }
 
   # base location fixup for relative paths
@@ -1338,6 +1338,8 @@ sub batch_mode {
     if (substr($j->{'options'}{'base_location'}, 0, 2) eq "./") {
       substr($j->{'options'}{'base_location'}, 0, 1) = $rundir;
     }
+    $j->{'options'}{'base_location'} .= '/';
+    $j->{'options'}{'base_location'} =~ s/\/\//\//g;
   }
 
   # iRules location pathing
@@ -1346,6 +1348,10 @@ sub batch_mode {
       substr($j->{'options'}{'rules_location'}, 0, 1) = $rundir;
     }
   }
+
+  print $tee "+ final batch workdir: $wDir\n";
+  print $tee "+ final batch basedir: $j->{'options'}{'base_location'}\n";
+  print $tee "+ final batch ruledir: $j->{'options'}{'rules_location'}\n";
 
   #verify system matches description
   if (defined ($j->{'system-ip'}) and ($j->{'system-ip'} ne "*")) {
@@ -1779,9 +1785,9 @@ sub batch_mode {
               $pa = $j->{'ifile'}{$fl}{'partition'};
             }
             if (existsResource( "sys/file/ifile/~$pa~$fl")) {
-              updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'});
+              updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'ifile'}{$fl}{'source'});
             } else {
-              createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'ifile'}{$fl}{'source'}, '');
+              createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'ifile'}{$fl}{'source'}, '');
             }
           }
         }
@@ -1800,9 +1806,9 @@ sub batch_mode {
               $tp = $j->{'datagroup'}{$fl}{'type'};
             }
             if (existsResource( "sys/file/data-group/~$pa~$fl")) {
-              updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'});
+              updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'datagroup'}{$fl}{'source'});
             } else {
-              createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'datagroup'}{$fl}{'source'}, $tp);
+              createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'datagroup'}{$fl}{'source'}, $tp);
             }
           }
         }
@@ -1817,9 +1823,9 @@ sub batch_mode {
               $pa = $j->{'monitor'}{$fl}{'partition'};
             }
             if (existsResource( "sys/file/external-monitor/~$pa~$fl")) {
-              updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'});
+              updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'monitor'}{$fl}{'source'});
             } else {
-              createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . '/' . $j->{'monitor'}{$fl}{'source'}, '');
+              createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'monitor'}{$fl}{'source'}, '');
             }
           }
         }
