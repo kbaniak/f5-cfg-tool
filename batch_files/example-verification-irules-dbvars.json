@@ -1,0 +1,68 @@
+{
+  "system":      "*",
+  "system-ip":   "*",
+  "sw-version":  "13.1.1*",
+  "description": "Procedures for verification",
+  "version":     "1.0",
+  "author":      "Krystian Baniak, Exios Consulting",
+  "steps" :   [ "SAVE" ],
+  "stepset": {
+    "check":  [ "COMPARE_RULES", "COMPARE_DBSET", "VERIFY_SET:cset" ],
+    "rules":  [ "LOAD_RULES" ],
+    "dbvars": [ "COMPARE_DBSET" ]
+  },
+  "rules": {
+    "o_reslib": { "priority": 1 },
+    "Gi_Handler_DNS_v.1.0": { },
+    "Gi_Handler_HTTP_v.1.0": { },
+    "Gi_Handler_IP_v.1.0": { },
+    "Gi_Handler_TCP_v.1.0": { },
+    "Gi_Handler_TLS_v.1.0": { },
+    "Gi_Handler_UDP_v.1.0": { }
+  },
+  "verifyset": {
+    "cset": [
+      {
+        "type": "ltm/pool",
+        "set": [ 
+          { "name": "POOL_v4", "partition": "Common" },
+          { "name": "POOL_v6", "partition": "Common" }
+        ]
+      },
+      {
+        "type": "ltm/virtual",
+        "set": [
+          { "name": "VS_TEST_v4", "partition": "Common" },
+          { "name": "VS_TEST_v6", "partition": "Common" }
+        ]
+      }
+    ]
+  },
+  "dbvars": {
+    "tm.tcpsegmentationoffload": "disable",
+    "connection.syncookies.threshold": "100000000",
+    "pvasyncookies.virtual.maxsyncache": "4093",
+    "tm.maxrejectrate": "1000",
+    "tm.tcpprogressive.autobuffertuning": "disable"
+  },
+  "options": {
+    "rules_location":    "./iRules",
+    "working-directory": "./",
+    "base_location":     "./SUBDIR",
+    "search_path":       [ ],
+    "irule_diff":        true,
+    "verify_diff":       true,
+    "make_local_copy":   false,
+    "js-template-dir":   "js-templates",
+    "verify_merge_sets": true
+  },
+  "comments": [
+    "js-template-dir is relative to the base_location",
+    "working-directory is used as destination for ucs and scf archives",
+    "verify_merge_sets uses tmsh merge verify before installing new configuration",
+    "irule_diff will show diff of iRules when discrepancies are found",
+    "verify_diff will show diff of json configuration blocks if found on verified objects",
+    "search_path is used to look for resources when merging merge sets",
+    "make_local_copy will store json source config snippets in js-store subdir of a base_location. Use this for configuration auditing"
+  ]
+}
