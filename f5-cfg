@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.1.1';
+my $version = '1.2.0';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -59,7 +59,7 @@ sub PATCH  { _simple_req('PATCH',  @_); }
 # --
 
 our ( %opts );
-getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:Z:P:', \%opts);
+getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:B:Z:P:', \%opts);
 
 unless ($opts{'Q'}) {
   print("(C) 2019, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
@@ -109,8 +109,8 @@ if ($opts{'h'}){
    -S           : sync cluster
    -w           : working directory
    -b name      : batch mode that uses json file as input
-   -Z step      : select step set from a step set list
-
+   -B steps     : semicolon delimited list of steps, mutually exclusive with -b option
+   -Z step      : select step set from a step set list, used only with a -b option
    -x cmd       : execute advanced script action
    -R name      : run special report name [ availability depends on version ]
    -T           : use token based authentication
@@ -215,7 +215,7 @@ if ($opts{'d'}) {
 #------------------------------------------------
 # LWP settings
 my $ua   = new LWP::UserAgent;
-$ua->timeout(20);
+$ua->timeout(600);
 $ua->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
 #------------------------------------------------
 # F5 token based authentication
@@ -243,7 +243,13 @@ if ($popts->get('bigiq') ne '') {
 if ($opts{'b'}) {
   print $tee "+ running in a batch mode\n";
   print $tee "+-- input file: $opts{'b'}\n";
-  batch_mode( $opts{'b'} );
+  if ($opts{'B'}) { print $tee "!-- you cannot use -b and -B simultaneously\n"; exit 4; }
+  batch_mode( $opts{'b'}, 'file' );
+  exit;
+} 
+if ($opts{'B'}) {
+  if ($opts{'b'}) { print $tee "!-- you cannot use -b and -B simultaneously\n"; exit 4; }
+  batch_mode( $opts{'B'}, 'inline' );
   exit;
 }
 
@@ -441,23 +447,35 @@ sub print_platform_properties {
 # update host structures
 sub update_host {
   my $_h = shift;
+  my $md = shift || 'full';
 
-  if ($_h =~ /^[a-zA-Z]/){
+  if ($_h =~ /^[a-zA-Z]/) {
     $host_name = $_h;
     if (defined( $nodes{ $_h } )){
       $host = $nodes{ $_h };
-      $URL_BARE = "https://$host/";
-      $URL = "https://$host/mgmt/tm/";
-      $URLB = "https://$host/mgmt/shared/authn/login";
-      unless ($opts{'Q'}) { print $tee "+ host $host_name mapped to: [ $host ]\n"; }
     } else {
       print $tee "--- unknown host given!\n";
-      exit;
+      exit 100;
     }
+  } elsif ($_h =~ /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/) {
+    $host_name = $host = $_h;
+  } else {
+    print $tee "fatal: cannot switch host\n";
+    exit 101
   }
-  my ($_u,$_p) = $cache->check_auth( $_h );
-  if (($_u ne 'x') and ($_u ne $usr)) { $usr = $_u; }
-  if (($_p ne 'x') and ($_p ne $pass)) { $pass = $_p; }
+
+  # update all globals
+  $URL_BARE = "https://$host/";
+  $URL = "https://$host/mgmt/tm/";
+  $URLB = "https://$host/mgmt/shared/authn/login";
+  unless ($opts{'Q'}) { print $tee "+ host $host_name mapped to: [ $host ]\n"; }
+  
+  # perform auth cache scan if needed
+  if ($md eq 'full') {
+    my ($_u, $_p) = $cache->check_auth( $_h );
+    if (($_u ne 'x') and ($_u ne $usr)) { $usr = $_u; }
+    if (($_p ne 'x') and ($_p ne $pass)) { $pass = $_p; }
+  }
 }
 #
 # generate timestamp
@@ -521,13 +539,17 @@ sub query2json
   my $js = JSON->new;
   $js->pretty;
 
-  if ($cd ne 200) {
-    if (($cd eq 404) && ($resp =~ /was not found/)){
+  if (not $cd =~ /(200|202)/) {
+    if (($cd eq 404) && ($resp =~ /was not found/ || $resp =~ /Public URI path not registered/)){
       return $js->encode( { error => 'not found' } );
     } else {
-      print $tee "--- http get req error, code: $cd\n";
-      print $tee "--- response: $resp\n";
-      exit;
+      if ($mode eq 'do_not_fail') {
+        return $js->encode( { error => '404' } );
+      } else {
+        print $tee "--- http get req error, code: $cd\n";
+        print $tee "--- response: $resp\n";
+        exit;
+      }
     }
   }
 
@@ -578,7 +600,7 @@ sub tokenRequest
   my $cd = $res->code;
   my $resp = $res->content;
 
-  if ($cd ne 200) {
+  if (not $cd =~ /(200|202)/) {
     print $tee "--- http post req error, code: $cd\n";
     print $tee "--- response: $resp\n";
     exit;
@@ -615,7 +637,7 @@ sub postRequest
     print $tee "--- response: $resp\n";
   }
 
-  if ($cd ne 200) {
+  if ($cd !~ /(200|202)/) {
     print $tee "--- http post req error, code: $cd\n";
     print $tee "--- response: $resp\n";
     exit;
@@ -634,7 +656,7 @@ sub putRequest
   my $cd = $res->code;
   my $resp = $res->content;
 
-  if ($cd ne 200) {
+  if ($cd !~ /(200|202)/) {
     print $tee "--- http put req error, code: $cd\n";
     print $tee "--- response: $resp\n";
     exit;
@@ -655,7 +677,7 @@ sub patchRequest
   my $cd = $res->code;
   my $resp = $res->content;
 
-  if ($cd ne 200) {
+  if ($cd !~ /(200|202)/) {
     print $tee "--- http patch req error, code: $cd\n";
     print $tee "--- response: $resp\n";
     exit;
@@ -672,7 +694,7 @@ sub deleteRequest
   my $cd = $res->code;
   my $resp = $res->content;
 
-  if ($cd ne 200) {
+  if ($cd !~ /(200|202)/) {
     if (($cd eq 404) && ($resp =~ /was not found/)){
       return 2;
     } else {
@@ -1298,23 +1320,41 @@ sub getCwd {
   return $ret;
 }
 
+#
+# Batch mode to execute set of commands
+# use -B to specify steset from a command line
+# params:
+#  input: file name or string with commands
+#  mode: file or inline
 sub batch_mode {
-  my $fn = shift;
+  my ($fn, $md) = @_;
 
-  if (index($fn, "/") < 0 or substr($fn,0,2) eq "./") {
-    # try local directory as path is not absolute
-    $fn = "$rundir/$fn";
+  my $j = { 
+    options => { }, 
+    steps => qw()
+  };
+
+  if ($md eq 'file') {
+    if (index($fn, "/") < 0 or substr($fn,0,2) eq "./") {
+      # try local directory as path is not absolute
+      $fn = "$rundir/$fn";
+    }
+    open my $fh, "<", "$fn" or die "--- Error opening resource file: $fn!\n";
+    read $fh, my $buffer, -s $fh;
+    close $fh;
+    $j = decode_json($buffer);
+  } elsif ($md eq 'inline') {
+    my @st = split(';', $fn);
+    $j->{'steps'} = \@st;
+  } else {
+    die "!fatal: unsupported batch mode requested: $md\n";
   }
-
-  open my $fh, "<", "$fn" or die "--- Error opening resource file: $fn!\n";
-  read $fh, my $buffer, -s $fh;
-  close $fh;
 
   my $confNo  = 0;
   my $tmsh_mg = 0;
   my $file_mg = 0;
   my $cmd_mg = 0;
-  my $j = decode_json($buffer);
+  my $alternativeHost = '';
 
   # this is for extended tests
   $j->{'options'}{'rundir'} = $rundir;
@@ -1331,6 +1371,8 @@ sub batch_mode {
     }
     $wDir .= '/';
     $wDir =~ s/\/\//\//g;
+  } else {
+    $j->{'options'}{'working-directory'} = $rundir . '/';
   }
 
   # base location fixup for relative paths
@@ -1340,6 +1382,8 @@ sub batch_mode {
     }
     $j->{'options'}{'base_location'} .= '/';
     $j->{'options'}{'base_location'} =~ s/\/\//\//g;
+  } else {
+    $j->{'options'}{'base_location'} = $rundir . '/';
   }
 
   # iRules location pathing
@@ -1347,6 +1391,8 @@ sub batch_mode {
     if (substr($j->{'options'}{'rules_location'}, 0, 2) eq "./") {
       substr($j->{'options'}{'rules_location'}, 0, 1) = $rundir;
     }
+  } else {
+    $j->{'options'}{'rules_location'} = $rundir . '/';
   }
 
   print $tee "+ final batch workdir: $wDir\n";
@@ -1386,6 +1432,7 @@ sub batch_mode {
     }
   }
 
+  # execute a batch 
   foreach my $step ( @{ $pxstep } ) {
     # special targets
     my @otgt = split( ':', $step);
@@ -1395,6 +1442,17 @@ sub batch_mode {
       switch ($otgt[0]) {
         case 'DELAY' {
           sleep($otgt[1]);
+        }
+        case 'USE_HOST' {
+          if ($otgt[1] =~ /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/) {
+            if ($otgt[1] ne $host) {
+              print $tee "+ switching host from: $host to: \033[35m$otgt[1]\033[0m\n ";
+              $alternativeHost = $host;
+              &update_host( $otgt[1] );
+            }
+          } else {
+            die "!fatal: invalid IP address in switch host. Cannot continue as we may destroy something.\n";
+          }
         }
         case 'UPSET' {
           if ((defined $j->{'uploadset'}) && (defined $j->{'uploadset'}{$otgt[1]})) {
@@ -1416,7 +1474,7 @@ sub batch_mode {
           }
         }
         case 'CSET' {
-          print $tee "+-- [step: $otgt[0] command set execute: $otgt[1]\n";
+          print $tee "+-- [step: $otgt[0]] command set execute: $otgt[1]\n";
           if ((defined $j->{'commandset'}) && (defined $j->{'commandset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'commandset'}{$otgt[1]} }) {
               print $tee "   . executing command: $kx\n";
@@ -1465,6 +1523,47 @@ sub batch_mode {
             }
           }
         }
+        case 'DON_PROVISION' {
+          print $tee "+-- [step: $step] processing declarative onboarding set: $otgt[1]\n";
+          if ((defined $j->{'clusterset'}) && (defined $j->{'clusterset'}{$otgt[1]})) {
+            my $fn = $j->{'options'}{'base_location'} . $j->{'clusterset'}{$otgt[1]}{'resource'};
+            my $hs = $j->{'clusterset'}{$otgt[1]}{'host'};
+            
+            open my $fh, "<", $fn or die "--- Error opening resource file: $fn!\n";
+            read $fh, my $buffer, -s $fh;
+            close $fh;
+            
+            my $dur = $URL;
+            $dur =~ s/tm\///;
+            my $res = postRequest( $dur . 'shared/declarative-onboarding?async=true', $buffer);
+            my $tid = '';
+            print Dumper($res) . "\n";
+            
+            if (ref($res) eq 'HASH' && defined $res->{'id'}) {
+              $tid = $res->{'id'};
+            } else {
+              die "! problem with starting a do process";
+            }
+            
+            # wait for task to finish
+            print $tee ". waiting for do process: $tid to finish\n";
+            while (1) {
+              $res = query2object( $dur . 'shared/declarative-onboarding/task/' . $tid, 'do_not_fail' );
+              if (ref($res) eq 'HASH') {
+                if (defined $res->{'result'} && $res->{'result'}{'status'} eq 'OK') {
+                  print $tee "+ declarative onboarding is now installed, version:\033[32m $$res[0]{'version'}\033[0m\n";
+                  last;
+                }
+                if (defined $res->{'result'} && $res->{'result'}{'status'} eq 'ERROR') {
+                  print $tee "-- do failed with error: $res->{'result'}{'message'}\n";
+                  exit 7;
+                }
+              }
+              sleep 2;
+            }
+
+          }
+        }
         default {
           $cabrt = 0;
         }
@@ -1473,6 +1572,11 @@ sub batch_mode {
     }
     # normal targets
     switch ($step) {
+      case 'RESET_HOST' {
+        print $tee ". switching target back to: $alternativeHost\n";
+        &update_host( $alternativeHost );
+        $alternativeHost = '';
+      }
       case 'COMPARE_DBSET' {
         print $tee "+-- [step: $step] comparing sys variables\n";
         report_dbvars( $j->{'dbvars'} );
@@ -1543,6 +1647,53 @@ sub batch_mode {
            print $tee "  . removing scf files we have created\n";
            $k->deleteResource( "/var/local/scf/" . $fname, 'file');
            $k->deleteResource( "/var/local/scf/" . $fname . ".tar", 'file' );
+         }
+      }
+      case 'LOAD_DEFAULT' {
+         print $tee "+-- [step: $step] loading configuration defaults\n";
+         my $r = runGenericCommand( 'tmsh load sys config default' );
+         if (defined $r->{'commandResult'}){
+            printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
+         }
+      }
+      case 'DON_CHECK' {
+         print $tee "+-- [step: $step] checking declarative onboarding\n";
+         my $dur = $URL;
+         $dur =~ s/tm\///;
+         my $res = query2object( $dur . 'shared/declarative-onboarding/info', 'do_not_fail' );
+         #print Dumper($res);
+         if (ref($res) eq 'HASH' && defined $res->{'error'}) {
+           print $tee "- \033[31mdeclarative onboarding is not installed\033[0m\n";
+           if ((defined $j->{'options'}{'install_do_package'}) && ($j->{'options'}{'install_do_package'}) && (defined $j->{'options'}{'declonboard_image'})) {
+             my $ps = $j->{'options'}{'declonboard_image'};
+             print $tee ". installing declarative onboarding package \033[33m$ps\033[0m\n";
+             my $k = new CAudit( $host, $usr, $pass, $cport );
+             #$k->uploadFile( $j->{'options'}, $ps, '/var/config/rest/downloads/' .  $ps);
+             my $z = {
+               operation => 'INSTALL',
+               packageFilePath => '/var/config/rest/downloads/' . $ps
+             };
+             my $js = JSON->new;
+             postRequest( $dur . 'shared/iapp/package-management-tasks', $js->encode( $z ));
+             # wait for task to finish
+             print $tee ". waiting for install process to finish\n";
+             while (1) {
+               $res = query2object( $dur . 'shared/declarative-onboarding/info', 'do_not_fail' );
+               if (ref($res) ne 'HASH') {
+                 if (defined $$res[0]{'version'}) {
+                   print $tee "+ declarative onboarding is now installed, version:\033[32m $$res[0]{'version'}\033[0m\n";
+                   last;
+                 }
+               }
+               sleep 2;
+             }
+           } else {
+             print $tee "-- \033[31mDeclarative onboarding extension is missing, we have to abort!\033[0m\n";
+             exit 3;
+           }
+         } else {
+           my $cver = $$res[0]{'version'};
+           print $tee "+-- \033[34mDeclarative onboarding is installed, version: \033[32m$cver\033[0m\n";
          }
       }
       case 'LOAD_RULES' {

@@ -177,12 +177,17 @@ sub uploadFile
   my $localFile = $fname;
   if (defined($opts)) {
     if (defined($opts->{"base_location"})) {
-      $localFile = $opts->{"base_location"} . "/" . $fname;
+      $localFile = $opts->{"base_location"} . $fname;
       if (! -e $localFile) {
         if (defined($opts->{"search_path"})) {
           #
           # TODO: cycle through search locations, so far only first item from the list
-          $localFile = $opts->{"base_location"} . "/" . $opts->{"search_path"}[0] . "/" . $fname;
+          foreach my $subpath (@{ $opts->{'search_path'} }) {
+            $localFile = $opts->{"base_location"} . $subpath . "/" . $fname;
+            if (-e $localFile) {
+              last;
+            }
+          }
         }
       }
     }
