@@ -408,9 +408,9 @@ if ( $opts{'A'} ) {
   close($fh);
 
   if ($^O eq "MSWin32") {
-    `tar -cf $rundir/$wDir/$d.tar $d/`;
+    `tar -cf $wDir/$d.tar $d/`;
   } else {
-    `tar -cf $rundir/$wDir/$d.tar $d/`;
+    `tar -cf $wDir/$d.tar $d/`;
   }
   if ($remove_temp) {
     print $tee "... trying to remove directory";
