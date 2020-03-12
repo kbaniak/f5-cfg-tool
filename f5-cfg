@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.0';
+my $version = '1.2.1';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -312,15 +312,26 @@ if ($opts{'R'}) {
 # create commands
 if ($opts{'c'} or $opts{'C'}) {
   my $_t = 'rule';
+  my $floc = $ifns;
+
+  if (substr($ifns,0,2) eq './') {
+    substr($floc,0,1) = $rundir;
+  }
+
+  if (scalar( grep {! /\//} $ifns)) {
+    $floc = $rundir . '/' . $ifns;
+  }
+
   if ($popts->get('ctype') ne "") {
     $_t = $popts->get('ctype');
   }
+
   if ($opts{'c'}) {
-    print $tee "+ creating resource of type: $_t: $opts{'c'}\n";
-    createResource($_t, $opts{'c'}, 'Common', $ifns,'');
+    print $tee "+ creating resource of type: $_t: $opts{'c'} from: $floc\n";
+    createResource($_t, $opts{'c'}, 'Common', $floc, '');
   } else {
-    print $tee "+ updating resource of type: $_t: $opts{'C'}\n";
-    updateResource($_t, $opts{'C'}, 'Common', $ifns);
+    print $tee "+ updating resource of type: $_t: $opts{'C'} from: $floc\n";
+    updateResource($_t, $opts{'C'}, 'Common', $floc);
   }
   exit;
 }
