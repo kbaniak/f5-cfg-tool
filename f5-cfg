@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.1';
+my $version = '1.2.2';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -59,7 +59,7 @@ sub PATCH  { _simple_req('PATCH',  @_); }
 # --
 
 our ( %opts );
-getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:B:Z:P:', \%opts);
+getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:B:Z:P:D:', \%opts);
 
 unless ($opts{'Q'}) {
   print("(C) 2019, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
@@ -102,6 +102,7 @@ if ($opts{'h'}){
    -K           : verify listeners and their allocation to virtual servers
    -c name      : create iRule or other resource from a file given in -I option
    -C name      : update iRule or other resource from a file given in -I option
+   -D name      : dump given iRule to a working directory
    -I           : input resource
    -P           : port to connect to
    -r           : retain temporal objects (used with -A option)
@@ -252,7 +253,29 @@ if ($opts{'B'}) {
   batch_mode( $opts{'B'}, 'inline' );
   exit;
 }
-
+# -- iRule dump mode 
+if ($opts{'D'} && $opts{'D'} ne "") {
+  my $_f = 0;
+  my $rules = query2object( $URL . 'ltm/rule');
+  foreach my $r ( @{ $rules->{'items'} }) {
+    next if ($r->{'name'} =~ /^_sys_/);
+    if ($r->{'name'} eq $opts{'D'}) {
+      print $tee ". dumping iRule: $r->{'name'}, partition: $r->{'partition'}\n";
+      if (-e "$wDir/$opts{'D'}.tcl") {
+        printf $tee "\x1b[33m** Warning:\x1b[0m the iRule with that name already found in your current directory!, old: %s, dumped: %s\n", sha1_hex(get_file_content("$wDir/$opts{'D'}.tcl")), sha1_hex( $r->{'apiAnonymous'} );
+      }
+      open my $fh, ">", "$wDir/$r->{'name'}.tcl.$tmp_stmp" or die "--- Error: Cannot create iRule file!\n";
+      print $fh $r->{'apiAnonymous'};
+      close($fh);
+      $_f = 1;
+      last; 
+    }
+  }
+  unless ($_f) {
+    print $tee "! iRule not found: $opts{'D'}\n";
+  }
+  exit;
+}
 # single query mode
 if ($opts{'q'}) {
  print $tee "received query: $opts{'q'}\n";
