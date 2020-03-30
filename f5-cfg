@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.2';
+my $version = '1.2.3';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -351,10 +351,10 @@ if ($opts{'c'} or $opts{'C'}) {
 
   if ($opts{'c'}) {
     print $tee "+ creating resource of type: $_t: $opts{'c'} from: $floc\n";
-    createResource($_t, $opts{'c'}, 'Common', $floc, '');
+    createResource($_t, $opts{'c'}, 'Common', $floc, '', undef);
   } else {
     print $tee "+ updating resource of type: $_t: $opts{'C'} from: $floc\n";
-    updateResource($_t, $opts{'C'}, 'Common', $floc);
+    updateResource($_t, $opts{'C'}, 'Common', $floc, undef);
   }
   exit;
 }
@@ -1027,7 +1027,7 @@ sub verifyMergeFile
 
 sub createResource
 {
-  my ($t, $n, $part, $r, $mds) = @_;
+  my ($t, $n, $part, $r, $mds, $ops) = @_;
   my $js = JSON->new;
   $js->pretty();
 
@@ -1048,7 +1048,7 @@ sub createResource
   if ($t eq 'ifile') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass, $cport );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh create sys file ifile /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
@@ -1077,7 +1077,7 @@ sub createResource
   if ($t eq 'dgroup') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass, $cport );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $dgtype = "string";
     if ($mds eq "ip") { $dgtype = "ip"; }
@@ -1107,7 +1107,7 @@ sub createResource
   if ($t eq 'monitor') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh create sys file external-monitor /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
@@ -1137,7 +1137,7 @@ sub existsResource {
 # update resource: iRule|ifile,...
 sub updateResource
 {
-  my ($t, $n, $part, $r) = @_;
+  my ($t, $n, $part, $r, $ops) = @_;
   my $js = JSON->new;
   $js->pretty();
 
@@ -1154,7 +1154,7 @@ sub updateResource
   if ($t eq 'ifile') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass, $cport );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file ifile /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
@@ -1174,7 +1174,7 @@ sub updateResource
   if ($t eq 'dgroup') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass, $cport );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file data-group /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
@@ -1193,7 +1193,7 @@ sub updateResource
   if ($t eq 'monitor') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
     my $k = new CAudit( $host, $usr, $pass, $cport );
-    $k->uploadFile( undef, $r, $transname );
+    $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file external-monitor /$part/$n source-path file://$transname" );
     if (defined( $r->{'commandResult'})) {
@@ -1511,7 +1511,7 @@ sub batch_mode {
           print $tee "+-- [step: $otgt[0]] command set execute: $otgt[1]\n";
           if ((defined $j->{'commandset'}) && (defined $j->{'commandset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'commandset'}{$otgt[1]} }) {
-              print $tee "   . executing command: $kx\n";
+              print $tee "   . executing command: \x1b[32m$kx\x1b[0m\n";
               my $r = runGenericCommand( $kx );
               if (defined $r->{'commandResult'}){
                 printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
@@ -1970,9 +1970,9 @@ sub batch_mode {
               $pa = $j->{'ifile'}{$fl}{'partition'};
             }
             if (existsResource( "sys/file/ifile/~$pa~$fl")) {
-              updateResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'ifile'}{$fl}{'source'});
+              updateResource('ifile', $fl, $pa, $j->{'ifile'}{$fl}{'source'}, $j->{'options'});
             } else {
-              createResource('ifile', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'ifile'}{$fl}{'source'}, '');
+              createResource('ifile', $fl, $pa, $j->{'ifile'}{$fl}{'source'}, '', $j->{'options'});
             }
           }
         }
@@ -1991,9 +1991,9 @@ sub batch_mode {
               $tp = $j->{'datagroup'}{$fl}{'type'};
             }
             if (existsResource( "sys/file/data-group/~$pa~$fl")) {
-              updateResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'datagroup'}{$fl}{'source'});
+              updateResource('dgroup', $fl, $pa, $j->{'datagroup'}{$fl}{'source'}, $j->{'options'});
             } else {
-              createResource('dgroup', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'datagroup'}{$fl}{'source'}, $tp);
+              createResource('dgroup', $fl, $pa, $j->{'datagroup'}{$fl}{'source'}, $tp, $j->{'options'});
             }
           }
         }
@@ -2008,9 +2008,9 @@ sub batch_mode {
               $pa = $j->{'monitor'}{$fl}{'partition'};
             }
             if (existsResource( "sys/file/external-monitor/~$pa~$fl")) {
-              updateResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'monitor'}{$fl}{'source'});
+              updateResource('monitor', $fl, $pa, $j->{'monitor'}{$fl}{'source'}, $j->{'options'});
             } else {
-              createResource('monitor', $fl, $pa, $j->{'options'}{'base_location'} . $j->{'monitor'}{$fl}{'source'}, '');
+              createResource('monitor', $fl, $pa, $j->{'monitor'}{$fl}{'source'}, '', $j->{'options'});
             }
           }
         }
@@ -2095,13 +2095,13 @@ sub load_irules
     if (defined $rls{$rl}) {
       if ($fhss_sha ne $rls{$rl}{'hash'}) {
         print $tee "  . \x1b[34mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
-        updateResource('rule', $rl, 'Common', $fhss);
+        updateResource('rule', $rl, 'Common', $fhss, undef);
       } else {
         print $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
       }
     } else {
       print $tee "  . \x1b[33minstalling rule: $rl\x1b[0m <hash $fhss_sha>\n";
-      createResource('rule', $rl, 'Common', $fhss, '');
+      createResource('rule', $rl, 'Common', $fhss, '', undef);
     }
   }
 }
