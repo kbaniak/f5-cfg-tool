@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.4';
+my $version = '1.2.6;
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -68,7 +68,7 @@ our ( %opts );
 getopts('u:p:O:t:q:fdhAikKTrQc:C:I:sSx:R:w:l:b:B:Z:P:D:', \%opts);
 
 unless ($opts{'Q'}) {
-  print("(C) 2019, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\n");
+  print("\x1b[92m(C) 2020, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\x1b[0m\n");
 }
 #-------------------------------------------------
 # advanced options parser
@@ -253,13 +253,13 @@ if ($opts{'b'}) {
   if ($opts{'B'}) { print $tee "!-- you cannot use -b and -B simultaneously\n"; exit 4; }
   batch_mode( $opts{'b'}, 'file' );
   exit;
-} 
+}
 if ($opts{'B'}) {
   if ($opts{'b'}) { print $tee "!-- you cannot use -b and -B simultaneously\n"; exit 4; }
   batch_mode( $opts{'B'}, 'inline' );
   exit;
 }
-# -- iRule dump mode 
+# -- iRule dump mode
 if ($opts{'D'} && $opts{'D'} ne "") {
   my $_f = 0;
   my $rules = query2object( $URL . 'ltm/rule');
@@ -274,7 +274,7 @@ if ($opts{'D'} && $opts{'D'} ne "") {
       print $fh $r->{'apiAnonymous'};
       close($fh);
       $_f = 1;
-      last; 
+      last;
     }
   }
   unless ($_f) {
@@ -452,6 +452,34 @@ exit;
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Routines
 
+# finds all static variable declarations from a stream and stores in hash reference
+# params: ref to hash and buffer with iRule contents
+sub find_static_vars
+{
+  my ($ref, $data, $rname) = @_;
+  my $reg=0;
+  foreach my $k ( split(/[\r\n]/, $data)) {
+    if ($reg) {
+      if ($k =~ /^when/) {
+        last;
+      }
+      chomp($k);
+      if ($k !~ /array set static/) {
+        if ($k =~ /set static::(.+?) (.+?)$/) {
+          #print ". found a static variable: $1 $2\n";
+          if (defined $ref->{$1}) {
+            print "ERROR\n";
+          } else {
+            $ref->{$1} = { value => $2, rule_name => $rname };
+          }
+        }
+      }
+    }
+    $reg=1 if $k =~ /^when RULE_INIT/;
+  }
+  return $ref;
+}
+
 sub terminate_with_error {
   my ($hf, $heading, $msg) = @_;
 
@@ -516,7 +544,7 @@ sub update_host {
   $URL = "https://$host/mgmt/tm/";
   $URLB = "https://$host/mgmt/shared/authn/login";
   unless ($opts{'Q'}) { print $tee "+ host $host_name mapped to: [ $host ]\n"; }
-  
+
   # perform auth cache scan if needed
   if ($md eq 'full') {
     my ($_u, $_p) = $cache->check_auth( $_h );
@@ -1388,8 +1416,8 @@ sub isJSONString {
 sub batch_mode {
   my ($fn, $md) = @_;
 
-  my $j = { 
-    options => { }, 
+  my $j = {
+    options => { },
     steps => qw()
   };
 
@@ -1498,7 +1526,7 @@ sub batch_mode {
     }
   }
 
-  # execute a batch 
+  # execute a batch
   foreach my $step ( @{ $pxstep } ) {
     # special targets
     my @otgt = split( ':', $step);
@@ -1594,23 +1622,23 @@ sub batch_mode {
           if ((defined $j->{'clusterset'}) && (defined $j->{'clusterset'}{$otgt[1]})) {
             my $fn = $j->{'options'}{'base_location'} . $j->{'clusterset'}{$otgt[1]}{'resource'};
             my $hs = $j->{'clusterset'}{$otgt[1]}{'host'};
-            
+
             open my $fh, "<", $fn or terminate_with_error($tee, 'file open', "--- Error opening resource file: $fn");
             read $fh, my $buffer, -s $fh;
             close $fh;
-            
+
             my $dur = $URL;
             $dur =~ s/tm\///;
             my $res = postRequest( $dur . 'shared/declarative-onboarding?async=true', $buffer);
             my $tid = '';
             print Dumper($res) . "\n";
-            
+
             if (ref($res) eq 'HASH' && defined $res->{'id'}) {
               $tid = $res->{'id'};
             } else {
               terminate_with_error($tee, 'DON_PROVISION', "problem with starting a do process");
             }
-            
+
             # wait for task to finish
             print $tee ". waiting for do process: $tid to finish\n";
             while (1) {
@@ -2214,6 +2242,8 @@ sub report_irules
    my $ngod = 0;
    my $nmis = 0;
    my $ndif = 0;
+   my %svar_local;
+   my %svar_remote;
 
    opendir my $dir, $base or terminate_with_error($tee, 'direcory open', "Cannot open directory $base");
    my @files = grep { /^.+?\.tcl$/ } readdir $dir;
@@ -2229,11 +2259,11 @@ sub report_irules
 
    foreach my $f (sort @files) {
 
-     if ($j->{'rules'}){
+     if ($j->{'rules'}) {
        $nset = scalar keys %{ $j->{'rules'} };
        my $la = $f;
        $la =~ s/.tcl//;
-       if (! grep { /$la/ } keys %{$j->{'rules'}}) {
+       if (! grep { /^$la$/ } keys %{$j->{'rules'}}) {
          printf $tee " %50s\t[\033[33mSKIP\033[0m]\n", $f;
          next;
        }
@@ -2248,6 +2278,7 @@ sub report_irules
 
      $f =~ s/.tcl//;
      printf $tee " %50s", $f;
+     find_static_vars(\%svar_local, $buffer, $f);
 
      my $found = 0;
      foreach my $r ( @{ $rules->{'items'} } )
@@ -2255,6 +2286,7 @@ sub report_irules
         if ($r->{'name'} eq $f) {
           $found = 1;
           my $ih = sha1_hex( $r->{'apiAnonymous'} );
+          find_static_vars(\%svar_remote, $r->{'apiAnonymous'}, $f);
           if ($oh ne $ih) {
             if ($^O eq "MSWin32") {
               printf $tee "\t[FAIL] %d %d\n", length($buffer) , length($r->{'apiAnonymous'});
@@ -2283,6 +2315,19 @@ sub report_irules
    printf $tee ". irules found in reference directory:    %d\n", $ndir;
    printf $tee ". irules declared in a batch and checked: %d\n", $nset if $nset > 0;
    printf $tee ". stats: OK: %d, DIFF: %d, MISS: %d \n", $ngod, $ndif, $nmis;
+   print $tee '-' x 100 . "\n";
+
+   # analyze static variables
+   print $tee ". static::namespace check\n";
+   foreach my $svar (sort keys %svar_local) {
+     if (defined $svar_remote{$svar}) {
+       if ($svar_local{$svar}{'value'} ne $svar_remote{$svar}{'value'}) {
+         printf $tee " \033[33mwarning\033[0m: static var change detected: \033[34m<$svar_local{$svar}{'rule_name'}> $svar\033[0m: local: $svar_local{$svar}{'value'}, remote: $svar_remote{$svar}{'value'} \033[0m\n";
+       }
+     } else {
+       printf $tee " \033[33mwarning\033[0m: static var missing on remote: \033[34m<$svar_local{$svar}{'rule_name'}>$svar\033[0m \n";
+     }
+   }
    print $tee '-' x 100 . "\n";
 
    if ($diff eq "true") {
