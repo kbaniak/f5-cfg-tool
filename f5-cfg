@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.6';
+my $version = '1.2.7';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -458,6 +458,10 @@ sub find_static_vars
 {
   my ($ref, $data, $rname) = @_;
   my $reg=0;
+
+  if (! defined($ref->{'errors'})) {
+    $ref->{'errors'} = qw();
+  }
   foreach my $k ( split(/[\r\n]/, $data)) {
     if ($reg) {
       if ($k =~ /^when/) {
@@ -465,10 +469,12 @@ sub find_static_vars
       }
       chomp($k);
       if ($k !~ /array set static/) {
-        if ($k =~ /set static::(.+?) (.+?)$/) {
+        if ($k =~ /set static::(.+?)\s+(.+?)$/) {
           #print ". found a static variable: $1 $2\n";
           if (defined $ref->{$1}) {
-            print "ERROR\n";
+            # this static var is redefined
+            #print "ERROR\n";
+            push @{ $ref->{'errors'} }, "collision in: $rname, var: $1 = $2, previosly found in: $ref->{$1}{'rule_name'} = $ref->{$1}{'value'}";
           } else {
             $ref->{$1} = { value => $2, rule_name => $rname };
           }
@@ -2320,12 +2326,19 @@ sub report_irules
    # analyze static variables
    print $tee ". static::namespace check\n";
    foreach my $svar (sort keys %svar_local) {
+     next if $svar eq 'errors';
      if (defined $svar_remote{$svar}) {
        if ($svar_local{$svar}{'value'} ne $svar_remote{$svar}{'value'}) {
          printf $tee " \033[33mwarning\033[0m: static var change detected: \033[34m<$svar_local{$svar}{'rule_name'}> $svar\033[0m: local: $svar_local{$svar}{'value'}, remote: $svar_remote{$svar}{'value'} \033[0m\n";
        }
      } else {
        printf $tee " \033[33mwarning\033[0m: static var missing on remote: \033[34m<$svar_local{$svar}{'rule_name'}>$svar\033[0m \n";
+     }
+   }
+   if (defined $svar_local{'errors'}) {
+     print $tee "!! static::var errors:\n";
+     foreach my $erk (@{ $svar_local{'errors'} }) {
+       print $tee "  \033[1;31m" . $erk . "\033[0m\n";
      }
    }
    print $tee '-' x 100 . "\n";
