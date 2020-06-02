@@ -1474,8 +1474,9 @@ sub batch_mode {
     $wDir =~ s/\/\//\//g;
   } else {
     $j->{'options'}{'working-directory'} = $rundir . '/';
+    $wDir = $rundir . '/';
   }
-
+  
   # base location fixup for relative paths
   if (defined $j->{'options'}{'base_location'}) {
     if (substr($j->{'options'}{'base_location'}, 0, 2) eq "./") {
