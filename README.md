@@ -18,7 +18,7 @@ podman build --format=docker -t f5-cfg .
 ```
 Run a container, ensuring that a local directory is bound for persistent storage
 ```
-podman run --rm -it -v local_directory:/home/rest/migration f5-cfg bash
+podman run --rm -it --mount type=bind,src=./local_directory,dst=/home/rest/migration f5-cfg bash
 ```
 When inside a container (using bash shell) one may invoke a f5-cfg tool, like on these example that is used to create UCS archive on an F5:
 ```
