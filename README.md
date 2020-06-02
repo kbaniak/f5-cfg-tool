@@ -44,6 +44,19 @@ Now the file will be stored in the local directory:
 migrate-auto-10.128.1.47-020620-171800.ucs
 [root@e5728b9f8c42 migration]# 
 ```
+### Notes for Fedora (32) podman selinux 
+When one wants to bind a local forlder to migration directory of the container/pod we have to relabel the source directory.
+
+Let's assume we have ./test directory.
+```
+mkdir test
+chcon -Rt svirt_sandbox_file_t test/
+podman run -it --rm --mount type=bind,src=./test,dst=/home/rest/migration f5-cfg bash
+[root@8ed070ca7b2d migration]# touch aa
+[root@8ed070ca7b2d migration]# exit
+ls test/
+aa
+```
 
 ## Examples
 ### Inspect F5 device manifest and print list of iRules
