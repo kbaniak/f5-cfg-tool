@@ -11,6 +11,40 @@ cd f5-cfg-tool
 ./f5-cfg -h
 ```
 
+## Docker/podman installation and use
+Compile podman image
+```
+podman build --format=docker -t f5-cfg .
+```
+Run a container, ensuring that a local directory is bound for persistent storage
+```
+podman run --rm -it -v local_directory:/home/rest/migration f5-cfg bash
+```
+When inside a container (using bash shell) one may invoke a f5-cfg tool, like on these example that is used to create UCS archive on an F5:
+```
+podman run -it --rm f5-cfg bash
+[root@d045ed96d5dd migration]# f5-cfg -t 10.128.1.47 -B MAKE_UCS -Oucs_secret=test123
+. runtime location: /home/rest/f5-cfg-tool, rundir: /home/rest/migration
+
+(C) 2020, Krystian Baniak <krystian.baniak@exios.pl>,  F5 restful configuration tool, version: 1.2.8
+-- creating new empty cache file.
++ host 10.128.1.47 mapped to: [ 10.128.1.47 ]
++ final batch workdir: /home/rest/migration/
++ final batch basedir: /home/rest/migration/
++ final batch ruledir: /home/rest/migration/
++-- [step: MAKE_UCS] make system archive
+  . creating encrypted ucs archive
+  . ucs saved into: migrate-auto-10.128.1.47-020620-171800
+++ downloading resource: migrate-auto-10.128.1.47-020620-171800.ucs 
+++ total bytes transferred: 7538951
+```
+Now the file will be stored in the local directory:
+```
+[root@e5728b9f8c42 migration]# ls
+migrate-auto-10.128.1.47-020620-171800.ucs
+[root@e5728b9f8c42 migration]# 
+```
+
 ## Examples
 ### Inspect F5 device manifest and print list of iRules
 ```

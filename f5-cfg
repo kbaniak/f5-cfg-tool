@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.8';
+my $version = '1.2.9';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
