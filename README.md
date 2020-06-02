@@ -16,9 +16,9 @@ Compile podman image
 ```
 podman build --format=docker -t f5-cfg .
 ```
-Run a container, ensuring that a local directory is bound for persistent storage
+Run a container:
 ```
-podman run --rm -it -v local_directory:/home/rest/migration f5-cfg bash
+podman run --rm -it f5-cfg bash
 ```
 When inside a container (using bash shell) one may invoke a f5-cfg tool, like on these example that is used to create UCS archive on an F5:
 ```
@@ -49,13 +49,16 @@ When one wants to bind a local forlder to migration directory of the container/p
 
 Let's assume we have ./test directory.
 ```
-mkdir test
-chcon -Rt svirt_sandbox_file_t test/
-podman run -it --rm --mount type=bind,src=./test,dst=/home/rest/migration f5-cfg bash
+[krystian:0:~]$ mkdir test
+[krystian:0:~]$ chcon -Rt svirt_sandbox_file_t test/
+[krystian:0:~]$ podman run -it --rm --mount type=bind,src=./test,dst=/home/rest/migration f5-cfg bash
 [root@8ed070ca7b2d migration]# touch aa
 [root@8ed070ca7b2d migration]# exit
-ls test/
-aa
+[krystian:0:~]$ tree test/
+test/
+└── aa
+
+0 directories, 1 file
 ```
 
 ## Examples
