@@ -22,7 +22,8 @@ my $ODEFS = {
  "report_name"      => { usage => "modify report output by addinf parameter to a report function" },
  "mrf_sip"          => { usage => "dump mrf sip configuration to excel file" },
  "respOnly"         => { usage => "when executing command -x, print only the command result" },
- "save_query_result" => { usage => "save iCR query results in a cache" }
+ "save_query_result"=> { usage => "save iCR query results in a cache" },
+ "ucs_secret"       => { usage => "passphrase used to encrypt ucs archive for MAKE_UCS batch command" }
 };
 
 my $BDEFS = {
@@ -45,6 +46,7 @@ my $BDEFS = {
   "LOAD_IFILES"    => { usage => "load iFiles: [ Hash(ifile) of { source } ]" },
   "LOAD_MONITORS"  => { usage => "load external [ Hash(monitors) of { source } ]" },
   "LOAD_DG"        => { usage => "load data groups type external: [ Hash(datagroup) of { source } ]" },
+  "LOAD_DEFAULT"   => { usage => "load sys config default" },
   "DOWNLOAD"       => { usage => "download file from remote system" },
   "CSET:name"      => { usage => "command set reference, name indicated named command set to be invoked" },
   "MSET:name"      => { usage => "merge set reference, name indicates named mereg set to be invoked" },
@@ -54,19 +56,23 @@ my $BDEFS = {
   "COMPARE_DBSET"  => { usage => "compare db vars on target system with definitions <dbvars> from a batch file" },
   "COMPARE_RULES"  => { usage => "compare rules on target system with rules from a configured set" },
   "VERIFY_SET:name" => { usage => "run verification procedure on a verifyset. Verify set must inlude a list of objects\n\t\t\tthat specify tpe and set of items to check" },
+  "USE_HOST"       => { usage => "switch target to a host name or ip address" },
+  "RESET_HOST"     => { usage => "reset host to original batch defined name or ip address" },
+  "COMPARE_RSETS"  => { usage => "compare irule sets (partitions) with local files" },
 };
 
 my $BOPTS = {
   "working-directory"   => "working directory, ie: to save files. if ./ is used then it is relative to a run directory",
   "ucs-file-name"       => "name of the ucs file to save",
-  "base_location"       => "indicates directory where to llok for resource files",
+  "base_location"       => "indicates directory where to look for resource files",
   "rules_location"      => "location of iRules for given batch",
   "verify_merge_sets"   => "verify merge sets before commiting changes",
   "remove_created_ucs"  => "remove ucs or scf after download",
   "signing_key"         => "irule signing key",
   "store_location"      => "used by a download command",
   "search_path"         => "array containing search relative subdirectories to look for resources used in a batch ",
-  "irule_diff"          => "true/false - use diff to show discrepancies in irules for the COMPARE_RULES command"
+  "irule_diff"          => "true/false - use diff to show discrepancies in irules for the COMPARE_RULES command",
+  "ucs-secret"          => "passphrase used to encrypt ucs archive for MAKE_UCS batch command",
 };
 
 sub new

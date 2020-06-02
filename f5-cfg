@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.2.7';
+my $version = '1.2.8';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -951,16 +951,16 @@ sub checkRules {
   my %irules = qw();
 
   if ($verb) {
-    printf $tee "\n %42s | %8s | %-40s\n",'name','partition','hash';
-    printf $tee "%s\n", '-' x 98;
+    printf $tee "\n %42s | %20s | %-40s\n",'name','partition','hash';
+    printf $tee "%s\n", '-' x 160;
   }
   foreach my $r ( @{ $rules->{'items'} }) {
     next if ($r->{'name'} =~ /^_sys_/);
     my $dg = sha1_hex( $r->{'apiAnonymous'} || '' );
     my $key = "/" . $r->{'partition'} . "/" . $r->{'name'};
-    if ($verb) { printf $tee " %42s | %8s | %40s\n", $r->{'name'}, $r->{'partition'}, $dg; }
+    if ($verb) { printf $tee " %42s | %20s | %40s\n", $r->{'name'}, $r->{'partition'}, $dg; }
     $RR{ $key } = 0;
-    $irules{$r->{'name'}} = {
+    $irules{ $key } = {
        hash      => $dg,
        used      => 0,
        partition => $r->{'partition'},
@@ -970,7 +970,7 @@ sub checkRules {
   my $vss = query2object( $URL . 'ltm/virtual');
   if ($verb) {
     printf $tee "%s\n", '-' x 160;
-    printf $tee "\n %32s | %12s | %32s | %-40s\n",'name','partition','application service','list of numbered iRules';
+    printf $tee "\n %42s | %12s | %32s | %-40s\n",'name','partition','application service','list of numbered iRules';
     printf $tee "%s\n", '-' x 160;
   }
   foreach my $r ( @{ $vss->{'items'}}) {
@@ -986,14 +986,14 @@ sub checkRules {
         }
         if ($fo == 0){
           $fo++;
-          if ($verb) { printf $tee " %32s | %12s | %32s | [%2d]  %-40s\n", $r->{'name'}, $r->{'partition'}, $aps, $fo, $k; }
+          if ($verb) { printf $tee " %42s | %12s | %32s | [%2d]  %-40s\n", $r->{'name'}, $r->{'partition'}, $aps, $fo, $k; }
         } else {
           $fo++;
-          if ($verb) { printf $tee " %32s | %12s | %32s | [%2d]  %-40s\n", ' ', ' ', ' ', $fo, $k; }
+          if ($verb) { printf $tee " %42s | %12s | %32s | [%2d]  %-40s\n", ' ', ' ', ' ', $fo, $k; }
         }
       }
     } else {
-      if ($verb) { printf $tee " %32s | %12s | %32s | %40s\n", $r->{'name'}, $r->{'partition'}, $aps, $rl; }
+      if ($verb) { printf $tee " %42s | %12s | %32s | %40s\n", $r->{'name'}, $r->{'partition'}, $aps, $rl; }
     }
   }
   if ($verb) {
@@ -1026,6 +1026,7 @@ sub syncCluster
     command     => "run",
     utilCmdArgs => "config-sync to-group $grp",
   };
+  # force-full-load-push
   $js->pretty();
   return postRequest( $URL . 'cm', $js->encode( $z ), 'yes' );
 }
@@ -1193,7 +1194,8 @@ sub updateResource
     read $fh, my $buffer, -s $fh;
     close $fh;
     my $z = {
-      apiAnonymous => $buffer
+      apiAnonymous => $buffer,
+      partition => $part
     };
     return putRequest( $URL . 'ltm/rule/' . $n, $js->encode( $z ) );
   }
@@ -1685,6 +1687,13 @@ sub batch_mode {
         print $tee "+-- [step: $step] comparing irule codebase\n";
         report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j);
       }
+      case 'COMPARE_RSETS' {
+        print $tee "+-- [step: $step] comparing irule codebase in sets\n";
+        foreach my $setname (sort keys %{ $j->{'ruleset'} }) {
+          print $tee "\033[35m>> comparing irules in the set: $setname\033[0m\n";
+          report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j, $setname);
+        }
+      }
       case 'MAKE_UCS' {
         # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
         # ucs files created via REST is not available to iControl
@@ -1698,10 +1707,20 @@ sub batch_mode {
            $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
            print $tee "+-- setting ucs name to: $z->{'name'}";
          }
-         #$js->pretty();
-         #postRequest( $URL . 'sys/ucs', $js->encode( $z ) );
          my $k = new CAudit( $host, $usr, $pass, $cport );
-         $k->createUcs( $z->{name} );
+         my $passw = '';
+         if (defined $j->{'options'}{'ucs-secret'} and $j->{'options'}{'ucs-secret'} ne "")  {
+           $passw = $j->{'options'}{'ucs-secret'} 
+         }
+         if ($popts->get('ucs_secret') ne '') {
+           $passw = $popts->get('ucs_secret');
+         }
+         if ($passw ne '') {
+           print $tee "  . \033[34mcreating encrypted ucs archive\033[0m\n";
+           $k->createUcs( $z->{name}, $passw );
+         } else {
+           $k->createUcs( $z->{name} );
+         }
          print $tee "  . ucs saved into: $z->{name}\n";
 
          if ($wDir ne '') {
@@ -2091,6 +2110,9 @@ sub batch_mode {
           }
         }
       }
+      else {
+        print $tee "+-- [step: $step] \033[31munsupported batch command!\033[0m\n";
+      }
     } # SWITCH
   }
 }
@@ -2144,11 +2166,14 @@ sub load_irules
     %rules = %{ $c->{'rules'} };
   }
 
-  foreach my $rl (sort keys %rules) {
-    if (defined $rules{$rl}{'priority'}) {
-      push @rs, $rl;
+  foreach my $prio (qw(1 2 3)) {
+    foreach my $rl (sort keys %rules) {
+      if (defined $rules{$rl}{'priority'} and $rules{$rl}{'priority'} == $prio) {
+        push @rs, $rl;
+      }
     }
   }
+  
   foreach my $rl (sort keys %rules) {
     if (not defined $rules{$rl}{'priority'}) {
       push @rs, $rl;
@@ -2156,18 +2181,26 @@ sub load_irules
   }
 
   foreach my $rl ( @rs ) {
+    my $partition = 'Common';
     my $fhss = "$c->{'options'}{rules_location}/$rl.tcl";
+    if (defined $rules{$rl}{'partition'}) {
+      if ($rules{$rl}{'partition'} ne 'Common') {
+        $partition = $rules{$rl}{'partition'};
+        $fhss = "$c->{'options'}{rules_location}/$partition/$rl.tcl";
+      }
+    }
+    my $rname = "/$partition/$rl";
     my $fhss_sha = get_file_sha1( $fhss, 'iRule' );
-    if (defined $rls{$rl}) {
-      if ($fhss_sha ne $rls{$rl}{'hash'}) {
-        print $tee "  . \x1b[34mupdating rule: $rl\x1b[0m <local: $fhss_sha, remote: $rls{$rl}{'hash'}>\n";
-        updateResource('rule', $rl, 'Common', $fhss, undef);
+    if (defined $rls{$rname}) {
+      if ($fhss_sha ne $rls{$rname}{'hash'}) {
+        print $tee "  . \x1b[34mupdating rule: /$partition/$rl\x1b[0m <local: $fhss_sha, remote: $rls{$rname}{'hash'}>\n";
+        updateResource('rule', $rl, $partition, $fhss, undef);
       } else {
         print $tee "  . \x1b[32mrule: $rl is uptodate\x1b[0m <hash $fhss_sha>\n";
       }
     } else {
-      print $tee "  . \x1b[33minstalling rule: $rl\x1b[0m <hash $fhss_sha>\n";
-      createResource('rule', $rl, 'Common', $fhss, '', undef);
+      print $tee "  . \x1b[33minstalling rule: /$partition/$rl\x1b[0m <hash $fhss_sha>\n";
+      createResource('rule', $rl, $partition, $fhss, '', undef);
     }
   }
 }
@@ -2236,7 +2269,7 @@ sub report_dbvars {
 # uses a baseline option
 sub report_irules
 {
-   my ($base, $diff, $j) = @_;
+   my ($base, $diff, $j, $set) = @_;
 
    if ($base eq '') {
      print $tee "-- cannot compare iRule without a baseline directory <base>\n";
@@ -2250,10 +2283,36 @@ sub report_irules
    my $ndif = 0;
    my %svar_local;
    my %svar_remote;
+   my %parts;
 
+   my $rlist = $j->{'rules'};
+   if (defined $set and defined $j->{'ruleset'}) {
+     $rlist = $j->{'ruleset'}{$set};
+   }
+
+   unless (defined $rlist) {
+     print $tee "\033[34m- warning: no iRules defined in the batch file\033[0m\n";
+   }
+   
+   # scan for partitions
+   foreach my $r (keys %{ $rlist }) {
+     if (defined($rlist->{$r}{'partition'}) and ($rlist->{$r}{'partition'} ne 'Common')) {
+       $parts{$rlist->{$r}{'partition'}} = 1;
+     }
+   }
+
+   # Common partition
    opendir my $dir, $base or terminate_with_error($tee, 'direcory open', "Cannot open directory $base");
    my @files = grep { /^.+?\.tcl$/ } readdir $dir;
    closedir $dir;
+
+   # Other partitions
+   foreach my $sdir (keys %parts) {
+     opendir my $dir, "$base/$sdir" or terminate_with_error($tee, 'direcory open', "Cannot open directory $base/$sdir");
+     my @tfs = grep { /^.+?\.tcl$/ } readdir $dir;
+     closedir $dir;
+     @files = (@files, map { "$sdir/$_" } @tfs);
+   }
 
    my $rules = query2object( $URL . 'ltm/rule');
    my %failed = qw||;
@@ -2261,35 +2320,52 @@ sub report_irules
    printf $tee " %50s\tStatus\n", "Rule name";
    print $tee '-' x 100 . "\n";
 
+   # number of rules
    $ndir = $#files;
+   $nset = scalar keys %{ $rlist };
 
    foreach my $f (sort @files) {
 
-     if ($j->{'rules'}) {
-       $nset = scalar keys %{ $j->{'rules'} };
-       my $la = $f;
-       $la =~ s/.tcl//;
-       if (! grep { /^$la$/ } keys %{$j->{'rules'}}) {
-         printf $tee " %50s\t[\033[33mSKIP\033[0m]\n", $f;
+     my @tks = split("/", $f);
+     if ($#tks > 1) {
+       printf $tee " %50s\t[\033[31mERROR\033[0m]\n", $f; 
+       next;
+     }
+     my $la = $tks[$#tks];
+     $la =~ s/.tcl//;
+     my $pa = 'Common';
+     if ($#tks == 1) {
+       $pa = $tks[0];
+     }
+
+     # ensure that we have iRule that is on disk but not interested in sending it to a system
+     if ($rlist) {
+       if (! grep { /^$la$/ } keys %{ $rlist }) {
+         printf $tee " %50s\t[\033[33mSKIP\033[0m]\n", "/$pa/$la";
          next;
        }
      }
 
+     # retrieve data from file
      open my $fh, "<", $base . "/$f" or terminate_with_error($tee, 'file open', "Error opening resource file $f");
      read $fh, my $buffer, -s $fh;
      close $fh;
+
      # remove newline
      chomp($buffer);
+     
+     # compute sha1 digest on file
      my $oh = sha1_hex( $buffer );
 
      $f =~ s/.tcl//;
-     printf $tee " %50s", $f;
+     printf $tee " %50s", "/$pa/$la";
      find_static_vars(\%svar_local, $buffer, $f);
 
+     # iterate over iRules scanned from the remote system
      my $found = 0;
-     foreach my $r ( @{ $rules->{'items'} } )
-     {
-        if ($r->{'name'} eq $f) {
+     foreach my $r ( @{ $rules->{'items'} } ) {
+
+        if (($r->{'name'} eq $la) and ($r->{'partition'} eq $pa)) {
           $found = 1;
           my $ih = sha1_hex( $r->{'apiAnonymous'} );
           find_static_vars(\%svar_remote, $r->{'apiAnonymous'}, $f);
@@ -2302,7 +2378,7 @@ sub report_irules
             # my $df = diff \$r->{'apiAnonymous'}, \$buffer, { STYLE => "Unified" };
             # compare changes over time over the base
             my $df = diff \$buffer, \$r->{'apiAnonymous'}, { STYLE => "Unified" };
-            $failed{$f} = $df;
+            $failed{$la} = $df;
             $ndif++;
           } else {
             print $tee "\t[\033[32mOK\033[0m] \n";

@@ -24,12 +24,6 @@ sub new
   return $self;
 }
 
-
-#sub SOAP::Transport::HTTP::Client::get_basic_credentials
-#{
-# return "$user" => "$pass";
-#}
-
 sub getVersion
 {
   my ($self) = @_;
@@ -50,7 +44,7 @@ sub getVersion
 
 sub createUcs
 {
-  my ($self, $name) = @_;
+  my ($self, $name, $passw) = @_;
 
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
@@ -62,13 +56,21 @@ sub createUcs
     'Authorization' => 'Basic ' . MIME::Base64::encode("$self->{'_user'}:$self->{'_pass'}", '')
   );
 
-  my $soapResponse = $icHandle->save_configuration
-  (
-    SOAP::Data->name( 'filename'  => $name ),
-    SOAP::Data->name( 'save_flag' => 'SAVE_FULL' )
-  );
-  return $soapResponse->result;
-
+  if ($passw and $passw ne "") {
+    my $soapResponse = $icHandle->save_encrypted_configuration
+    (
+      SOAP::Data->name( 'filename'  => $name ),
+      SOAP::Data->name( 'passphrase' => $passw )
+    );
+    return $soapResponse->result;
+  } else {
+    my $soapResponse = $icHandle->save_configuration
+    (
+      SOAP::Data->name( 'filename'  => $name ),
+      SOAP::Data->name( 'save_flag' => 'SAVE_FULL' )
+    );
+    return $soapResponse->result;
+  }
 }
 
 sub deleteResource
@@ -166,7 +168,7 @@ sub downloadResource
 
 sub uploadFile
 {
-  my ($self, $opts, $fname, $fileName, ) = (@_);
+  my ($self, $opts, $fname, $fileName) = (@_);
 
   my $bContinue  = 1;
   my $chain_type = "FILE_FIRST";
