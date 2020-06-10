@@ -59,7 +59,8 @@ sub createUcs
   if ($passw and $passw ne "") {
     my $soapResponse = $icHandle->save_encrypted_configuration
     (
-      SOAP::Data->name( 'filename'  => $name ),
+      SOAP::Data->name( 'filename' => $name ),
+      SOAP::Data->name( 'save_flag' => 'SAVE_FULL' ),
       SOAP::Data->name( 'passphrase' => $passw )
     );
     return $soapResponse->result;
@@ -71,6 +72,30 @@ sub createUcs
     );
     return $soapResponse->result;
   }
+}
+
+sub createScf
+{
+  my ($self, $name, $passw) = @_;
+
+  my $icHandle = SOAP::Lite
+    -> uri('urn:iControl:System/ConfigSync')
+    -> readable(1)
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
+
+  $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
+  $icHandle->transport->http_request->header(
+    'Authorization' => 'Basic ' . MIME::Base64::encode("$self->{'_user'}:$self->{'_pass'}", '')
+  );
+
+  my $soapResponse = $icHandle->save_single_configuration_file
+  (
+    SOAP::Data->name( 'filename' => $name ),
+    SOAP::Data->name( 'save_flag' => 'SAVE_FULL' ),
+    SOAP::Data->name( 'passphrase' => $passw ),
+    SOAP::Data->name( 'tarfile' => '' )
+  );
+  return $soapResponse->result;
 }
 
 sub deleteResource
