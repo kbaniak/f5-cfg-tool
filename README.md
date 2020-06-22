@@ -1,7 +1,32 @@
 # f5-cfg-tool
-F5 RESTful provisioning tool
+RESTful provisioning and automation tool for F5 Networks BIG-IP product.
 
-Developped in perl script language.
+Uses iControl SOAP and iControlREST API on F5 devices to facilitate operations and support of F5 devices like:
+- manage and audit configuration elements (with full support for administrative partitions),
+- automate configuration tasks using a batch mode. This tool accepts json formatted batch files that specify actions to perform on a remote F5 system(s),
+- run reports that collect information from selected configuration entities and present it in a tabular form,
+- REST API troubleshooting and debug.
+
+The primary application of this toll is to automate frequently used maintenance tasks, perform config audits and ensure maitenence window time is kept to minimum by eliminating human error factor.
+
+Supported features and software versions:
+- F5 software versions >= 11.x
+- iRule auditing and diff of the iRule code changes
+- iRule static variable checking and auditing
+- DB variable verification
+- rundimentary Declarative onboarding support
+- dmping portions of configuration in json format and verifiaction of changes using diff mode 
+- adding, removing and merging configuration elements
+- iRule/iFile/data group uploading/dumping
+- UCS/SCF backup and automated config management
+- batch mode accepting json formatted batch steps language, supporting multi target batches (like cluster provisioning)
+- reports providing info on iRules, virtuals and allocation of iRules to virtuals, ...
+- saving and synchronizing configuration
+- inline comand line batch mode
+- uploading files on F5 device, executing scripts and downloading files from F5 system
+- merging configuration sets using tmsh merge functionality
+
+Developped in perl script language, may be used as standalone script or in a docker/podman container - see instalation notes below.
 
 ## Installation
 First, clone the repository on your computer. Afterwards, follow the procedure:
@@ -12,7 +37,7 @@ cd f5-cfg-tool
 ```
 
 ## Docker/podman installation and use
-Compile podman image
+Compile a podman image
 ```
 podman build --format=docker -t f5-cfg .
 ```
@@ -162,7 +187,7 @@ Batch file contains sections that govern how it is processed:
 
 ## Usage Details
 ```
-options:
+ options:
  --------------------------------------------------------------------------------------------
 
    -h           : this help message
@@ -170,15 +195,17 @@ options:
    -q query     : single query mode, will not produce output file
    -u user      : user, default is admin
    -p password  : password, default is admin
+   -f           : password will be read from the stdin after a prompt
    -t host      : f5 mgmt interface's IP address to query
    -o file      : output file name, default is test.xlsx
    -a           : create full system config archive
    -A           : create only archives, skip generating xlsx file
    -i           : identify f5 box
-   -k           : verify iRule version and allocation
-   -K           : verify listeners and their allocation
+   -k           : verify iRule versions and allocation to virtual servers
+   -K           : verify listeners and their allocation to virtual servers
    -c name      : create iRule or other resource from a file given in -I option
    -C name      : update iRule or other resource from a file given in -I option
+   -D name      : dump given iRule to a working directory
    -I           : input resource
    -P           : port to connect to
    -r           : retain temporal objects (used with -a and -A)
@@ -187,11 +214,12 @@ options:
    -w           : working directory
    -l name      : affect -a and -A by unifying the name of the resource
    -b name      : batch mode that uses json file as input
-   -Z step      : select step set from a step set list
+   -B steps     : semicolon delimited list of steps, mutually exclusive with -b option
+   -Z step      : select step set from a step set list, used only with a -b option
 
    -x cmd       : execute advanced script action
    -R name      : run special report name [ availability depends on version ]
-   -T           : use token based authn
+   -T           : use token based authentication
    -Q           : quiet mode - supress logs to a file
    -O opts      : list of options param=value,param=value, use %20 to escape a white space
                   example:  base=gen8.2/test,label=ala%20ma%20kota
@@ -209,12 +237,17 @@ options:
    report_mode         : modify report output to batch friendly
    report_name         : modify report output by addinf parameter to a report function
    respOnly            : when executing command -x, print only the command result
+   save_query_result   : save iCR query results in a cache
+   scf_secret          : passphrase used to encrypt scf archive for MAKE_SCF batch command
    supress_log         : supress log audit to a file
+   ucs_secret          : passphrase used to encrypt ucs archive for MAKE_UCS batch command
+
 
  list of known batch commands
    ABORT               : abort at a given step
    COMMAND             : execute shell comamnd: [ Array(command) ]
    COMPARE_DBSET       : compare db vars on target system with definitions <dbvars> from a batch file
+   COMPARE_RSETS       : compare irule sets (partitions) with local files
    COMPARE_RULES       : compare rules on target system with rules from a configured set
    CONFIRM             : confirm next step with a question: [ Array(confirm-msg) ]
    CSET:name           : command set reference, name indicated named command set to be invoked
@@ -222,6 +255,7 @@ options:
    DELETIONS           : delete objects from the f5: [ Hash(delete) of [type,priority] ]
    DOWNLOAD            : download file from remote system
    LOADTMSH            : load config file and merge it: [ Array(tmsh-merge) ]
+   LOAD_DEFAULT        : load sys config default
    LOAD_DG             : load data groups type external: [ Hash(datagroup) of { source } ]
    LOAD_IFILES         : load iFiles: [ Hash(ifile) of { source } ]
    LOAD_MONITORS       : load external [ Hash(monitors) of { source } ]
@@ -232,32 +266,37 @@ options:
    REBIND_VS           : attach iRule to virtual servers: [ Hash(virtuals) of { site, rules } or [] ]
    RECERT              : create iRule certificates
    RENAME              : rename configuration objects: [ Hash(rename) ]
+   RESET_HOST          : reset host to original batch defined name or ip address
    RSET:name           : merge specific iRule set defined in ruleset setion of a batch file
    SAVE                : save configuration on a F5 unit
    SYNC                : synchronize a F5 cluster
    UNBIND_VS           : unbind iRules from virtual servers: [ Hash(unbindvs) ]
    UPLOAD              : upload resources on the box: [ Array(upload) ]
    UPSET:name          : upload set of files denoted by a name
+   USE_HOST            : switch target to a host name or ip address
    VERIFY              : verify that all operations are going to be successful
    VERIFY_SET:name     : run verification procedure on a verifyset. Verify set must inlude a list of objects
-                  			 that specify tpe and set of items to check
+                         that specify tpe and set of items to check
 
  list of batch options to be used in options section in json definition:
-   base_location       : indicates directory where to llok for resource files
+   base_location       : indicates directory where to look for resource files
    irule_diff          : true/false - use diff to show discrepancies in irules for the COMPARE_RULES command
-   remove_created_ucs  : remove ucs or scf after download
+   remove_created_scf  : remove scf after download
+   remove_created_ucs  : remove ucs after download
    rules_location      : location of iRules for given batch
+   scf-secret          : passphrase used to encrypt scf archive for MAKE_SCF batch command
+   scf-via-rest        : use iContolREST for scf creation (use on faster systems)
    search_path         : array containing search relative subdirectories to look for resources used in a batch 
    signing_key         : irule signing key
    store_location      : used by a download command
    ucs-file-name       : name of the ucs file to save
+   ucs-secret          : passphrase used to encrypt ucs archive for MAKE_UCS batch command
    verify_merge_sets   : verify merge sets before commiting changes
    working-directory   : working directory, ie: to save files. if ./ is used then it is relative to a run directory
 
-
 ```
 
-## Perl Dependencies
+## Perl instalation dependencies
 This tool requires the following modules to be installed on your platform:
 ```
 Switch
