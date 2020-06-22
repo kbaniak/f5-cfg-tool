@@ -113,11 +113,20 @@ sub deleteResource
   );
 
   my $soapResponse; 
+
+  print "++ removing resource: $name\n";
   
   if ($type eq 'ucs') {
     $soapResponse = $icHandle->delete_configuration ( SOAP::Data->name( 'filename'  => $name ) );
+  } elsif ($type eq 'scf') {
+    $soapResponse = $icHandle->delete_single_configuration_file ( SOAP::Data->name( 'filename'  => $name ) );
   } else {
     $soapResponse = $icHandle->delete_file ( SOAP::Data->name( 'filename'  => $name ) );
+  }
+
+  if ( $soap_response->fault ) {
+    print "-- error: " . $soap_response->faultcode, " ", $soap_response->faultstring, "\n";
+    return 0;
   }
 
   return $soapResponse->result;

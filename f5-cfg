@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.3.1';
+my $version = '1.3.2';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -1729,8 +1729,7 @@ sub batch_mode {
              ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
            # cleanup
            print $tee "  . removing ucs we have created\n";
-           $k->deleteResource( $z->{name}, 'ucs' );
-           #runGenericCommand( "tmsh delete sys ucs $z->{name}");
+           $k->deleteResource( $z->{name} . '.ucs', 'ucs' );
          }
       }
       case 'MAKE_SCF' {
@@ -1766,18 +1765,16 @@ sub batch_mode {
             $k->createScf( $fname );
           }
         }
-
         if ($wDir ne '') {
           $k->downloadResource('file', "/var/local/scf/" . $fname, $wDir . $fname );
           $k->downloadResource('file', "/var/local/scf/" . $fname . ".tar", $wDir . $fname . ".tar" );
         } else {
           print $tee "+-- note: working dir is not set, we do not download scf!\n";
         }
-        if ((defined $j->{'options'}{'remove_created_ucs'}) && ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
+        if ((defined $j->{'options'}{'remove_created_scf'}) && ($j->{'options'}{'remove_created_scf'} eq 'yes')) {
           # cleanup
           print $tee "  . removing scf files we have created\n";
-          $k->deleteResource( "/var/local/scf/" . $fname, 'file');
-          $k->deleteResource( "/var/local/scf/" . $fname . ".tar", 'file' );
+          $k->deleteResource( $fname, 'scf');
         }
       }
       case 'LOAD_DEFAULT' {
