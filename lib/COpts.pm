@@ -23,7 +23,8 @@ my $ODEFS = {
  "mrf_sip"          => { usage => "dump mrf sip configuration to excel file" },
  "respOnly"         => { usage => "when executing command -x, print only the command result" },
  "save_query_result"=> { usage => "save iCR query results in a cache" },
- "ucs_secret"       => { usage => "passphrase used to encrypt ucs archive for MAKE_UCS batch command" }
+ "ucs_secret"       => { usage => "passphrase used to encrypt ucs archive for MAKE_UCS batch command" },
+ "scf_secret"       => { usage => "passphrase used to encrypt scf archive for MAKE_SCF batch command" }
 };
 
 my $BDEFS = {
@@ -73,6 +74,8 @@ my $BOPTS = {
   "search_path"         => "array containing search relative subdirectories to look for resources used in a batch ",
   "irule_diff"          => "true/false - use diff to show discrepancies in irules for the COMPARE_RULES command",
   "ucs-secret"          => "passphrase used to encrypt ucs archive for MAKE_UCS batch command",
+  "scf-secret"          => "passphrase used to encrypt scf archive for MAKE_SCF batch command",
+  "scf-via-rest"        => "use iContolREST for scf creation (use on faster systems)"
 };
 
 sub new

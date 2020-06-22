@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.3.0';
+my $version = '1.3.1';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -1737,7 +1737,10 @@ sub batch_mode {
         print $tee "+-- [step: $step] make system scf archive\n";
         my $k = new CAudit( $host, $usr, $pass, $cport );
         my $fname = "migrate-auto-${host_name}-${tmp_stmp}.scf";
-        
+        if (defined $j->{'options'}{'scf-file-name'}) {
+          $fname = $j->{'options'}{'scf-file-name'} . "-" . ${tmp_stmp};
+          print $tee "+-- setting scf name to: $fname";
+        }
         print $tee ":: saving files to: $wDir\n";
         if ((defined $j->{'options'}{'scf_via_rest'}) && ($j->{'options'}{'scf_via_rest'} eq 'yes')) {
           my $js = JSON->new;
@@ -1754,8 +1757,8 @@ sub batch_mode {
           my $res = postRequest( $URL . 'sys/config', $js->encode( $z ) );
         } else {
           my $passw = '';
-          if (defined $j->{'options'}{'ucs-secret'} and $j->{'options'}{'ucs-secret'} ne "") { $passw = $j->{'options'}{'ucs-secret'} }
-          if ($popts->get('ucs_secret') ne '') { $passw = $popts->get('ucs_secret'); }
+          if (defined $j->{'options'}{'scf-secret'} and $j->{'options'}{'scf-secret'} ne "") { $passw = $j->{'options'}{'scf-secret'} }
+          if ($popts->get('scf_secret') ne '') { $passw = $popts->get('scf_secret'); }
           if ($passw ne '') {
             print $tee "  . \033[34mcreating encrypted scf archive\033[0m\n";
             $k->createScf( $fname, $passw );
