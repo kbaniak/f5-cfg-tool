@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.3.2';
+my $version = '1.3.3';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -166,6 +166,11 @@ if ($opts{'P'}) {
   $URL   = "https://$host:$opts{'P'}/mgmt/tm/";
   $URLB  = "https://$host:$opts{'P'}/mgmt/shared/authn/login";
 }
+# global operation flags
+my %rflags = (
+  'req_not_fatal'    => 0,
+  'req_error_silent' => 0
+);
 #-------------------------------------------------
 # Authentication Cache
 my $cache = CCache->new("./cfg/.ccache.json");
@@ -452,6 +457,13 @@ exit;
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # Routines
 
+#
+# rflags
+sub set_rflag
+{
+  my ($p, $v) = @_;
+  $rflags{$p} = $v;
+}
 # finds all static variable declarations from a stream and stores in hash reference
 # params: ref to hash and buffer with iRule contents
 sub find_static_vars
@@ -598,6 +610,7 @@ sub query2json
 {
   my $uri = shift;
   my $mode = shift || 'no';
+
   if ($mode eq 'yes') {
     $uri =~ s/localhost/$host/;
   }
@@ -662,6 +675,7 @@ sub query2object
 {
   my $uri = shift;
   my $mode = shift || 'no';
+  
   return decode_json( query2json( $uri, $mode ) );
 }
 
@@ -719,10 +733,12 @@ sub postRequest
   }
 
   if ($cd !~ /(200|202)/) {
-    print $tee "--- http post req error, code: $cd\n";
-    print $tee "--- response: $resp\n";
-    exit;
-  }
+    unless ($rflags{'req_error_silent'}) {
+      print $tee "--- http post req error, code: $cd\n";
+      print $tee "--- response: $resp\n";
+    }
+    unless ($rflags{'req_not_fatal'}) { exit } else { return 'failed' }
+  } 
 
   return decode_json($res->content);
 }
@@ -738,9 +754,11 @@ sub putRequest
   my $resp = $res->content;
 
   if ($cd !~ /(200|202)/) {
-    print $tee "--- http put req error, code: $cd\n";
-    print $tee "--- response: $resp\n";
-    exit;
+    unless ($rflags{'req_error_silent'}) {
+      print $tee "--- http put req error, code: $cd\n";
+      print $tee "--- response: $resp\n";
+    }
+    unless ($rflags{'req_not_fatal'}) { exit } else { return 'failed' }
   }
 
   return decode_json($res->content);
@@ -759,9 +777,11 @@ sub patchRequest
   my $resp = $res->content;
 
   if ($cd !~ /(200|202)/) {
-    print $tee "--- http patch req error, code: $cd\n";
-    print $tee "--- response: $resp\n";
-    exit;
+    unless ($rflags{'req_error_silent'}) {
+      print $tee "--- http patch req error, code: $cd\n";
+      print $tee "--- response: $resp\n";
+    }
+    unless ($rflags{'req_not_fatal'}) { exit } else { return 'failed' }
   }
   return decode_json($res->content);
 }
@@ -779,9 +799,11 @@ sub deleteRequest
     if (($cd eq 404) && ($resp =~ /was not found/)){
       return 2;
     } else {
-      print $tee "--- http delete req error, code: $cd\n";
-      print $tee "--- response: $resp\n";
-      exit;
+      unless ($rflags{'req_error_silent'}) {
+        print $tee "--- http delete req error, code: $cd\n";
+        print $tee "--- response: $resp\n";
+      }
+      unless ($rflags{'req_not_fatal'}) { exit } else { return 'failed' }
     }
   }
   return 0
@@ -1416,6 +1438,68 @@ sub isJSONString {
 }
 
 #
+# wait until some action happens
+sub wait_for_api_event{
+  my ($event, $timeout) = @_;
+  unless ($timeout) {
+    $timeout = 600; # 10 minutes default timeout
+  }
+  if ($event =~ /(online|standby|active)/) {
+    # wait until box is standby or active
+    print $tee ". waiting for device to become $event \n";
+    my $stm = time();
+    EWAIT: while ((time() - $stm) < $timeout) {
+       print $tee '.';
+       # check
+       my $r = &query2object( $URL . 'cm/device', 'do_not_fail' );
+       foreach my $e ( @{ $r->{'items'}} ) {
+         if ($e->{'managementIp'} eq $host) {
+           print " $e->{'failoverState'} ";
+           if ($event eq 'online') {
+             if ($e->{'failoverState'} =~ /(active|standby)/) { last 'EWAIT'; }
+           } else {
+             if ($e->{'failoverState'} eq $event) { last 'EWAIT'; }
+           }
+         }
+       }
+       # time check
+       sleep(8);
+    }
+    my $delta = time() - $stm;
+    print $tee "\n[ done ] waiting complete, time: $delta sec\n";
+  }
+}
+
+sub load_ilx_workspace
+{
+  my ($df) = @_;
+  my $k = new CAudit( $host, $usr, $pass, $cport );
+  my $pa = 'Common';
+  
+  if (defined $df->{'ilx'} && defined $df->{'ilx'}{'workspaces'}) {
+    my %wks  = %{ $df->{'ilx'}{'workspaces'} };
+    foreach my $w (sort keys %wks) {
+      if (defined $wks{$w}{'archive'}) {
+        $k->uploadFile( $df->{'options'}, $wks{$w}{'archive'}, '/shared/tmp/' . $wks{$w}{'archive'} );
+        print $tee ". installing workspace: $w: ";
+        my $operation = 'create';
+        if (existsResource( "ilx/workspace/~$pa~$w")) {
+          print $tee " - updating - ";
+          $operation = 'modify';
+        }
+        my $r = &runGenericCommand("tmsh $operation ilx workspace $w from-uri file:///shared/tmp/$wks{$w}{archive}");
+        if (existsResource( "ilx/workspace/~$pa~$w")) {
+          print $tee "[ \033[32mSUCCESS\033[0m ]\n";
+        } else {
+          print $tee "[ \033[31mFAILED\033[0m ] \n";
+          print $tee Dumper( $r ) . "\n";
+        }
+      }
+    }
+  }
+}
+
+#
 # Batch mode to execute set of commands
 # use -B to specify steset from a command line
 # params:
@@ -1546,6 +1630,10 @@ sub batch_mode {
         case 'DELAY' {
           sleep($otgt[1]);
         }
+        case 'WAIT_FOR' {
+          print $tee "+-- [step: $otgt[0]] pause batch until the event: $otgt[1]\n";
+          wait_for_api_event( $otgt[1] );
+        }
         case 'USE_HOST' {
           if ($otgt[1] =~ /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/) {
             if ($otgt[1] ne $host) {
@@ -1675,6 +1763,26 @@ sub batch_mode {
     }
     # normal targets
     switch ($step) {
+      case 'RESTART' {
+        print $tee "+-- [step: $step] restarting tmos processes\n";
+        set_rflag('req_not_fatal', 1);
+        set_rflag('req_error_silent', 1);
+        &runGenericCommand('clsh bigstart restart');
+        set_rflag('req_not_fatal', 0);
+        set_rflag('req_error_silent', 0);
+      }
+      case 'REBOOT' {
+        print $tee "+-- [step: $step] rebooting node (blades)\n";
+        set_rflag('req_not_fatal', 1);
+        set_rflag('req_error_silent', 1);
+        &runGenericCommand('clsh reboot');
+        set_rflag('req_not_fatal', 0);
+        set_rflag('req_error_silent', 0);
+      }
+      case 'MCPD_FORCELOAD' {
+        print $tee "+-- [step: $step] flagging mcpd resync: procedure K13030\n";
+        &runGenericCommand('clsh touch /service/mcpd/forceload');
+      }
       case 'RESET_HOST' {
         print $tee ". switching target back to: $alternativeHost\n";
         &update_host( $alternativeHost );
@@ -1695,42 +1803,45 @@ sub batch_mode {
           report_irules($j->{'options'}{'rules_location'}, ($j->{'options'}{'irule_diff'}) ? 'true' : 'false', $j, $setname);
         }
       }
+      case 'LOAD_ILX' {
+        # load ILX workspace from an archive file
+        print $tee "+-- [step: $step] install workspaces from an archive\n";
+        load_ilx_workspace($j);
+      }
       case 'MAKE_UCS' {
         # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
         # ucs files created via REST is not available to iControl
         print $tee "+-- [step: $step] make system archive\n";
-         #my $js = JSON->new;
-         my $z = {
-           command => "save",
-           name => "migrate-auto-${host_name}-${tmp_stmp}"
-         };
-         if (defined $j->{'options'}{'ucs-file-name'}) {
+        #my $js = JSON->new;
+        my $z = {
+          command => "save",
+          name => "migrate-auto-${host_name}-${tmp_stmp}"
+        };
+        if (defined $j->{'options'}{'ucs-file-name'}) {
            $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
            print $tee "+-- setting ucs name to: $z->{'name'}";
-         }
-         my $k = new CAudit( $host, $usr, $pass, $cport );
-         my $passw = '';
-         if (defined $j->{'options'}{'ucs-secret'} and $j->{'options'}{'ucs-secret'} ne "") { $passw = $j->{'options'}{'ucs-secret'} }
-         if ($popts->get('ucs_secret') ne '') { $passw = $popts->get('ucs_secret'); }
-         if ($passw ne '') {
-           print $tee "  . \033[34mcreating encrypted ucs archive\033[0m\n";
-           $k->createUcs( $z->{name}, $passw );
-         } else {
-           $k->createUcs( $z->{name} );
-         }
-         print $tee "  . ucs saved into: $z->{name}\n";
-
-         if ($wDir ne '') {
-            $k->downloadResource('ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
-         } else {
-           print $tee "+-- note: working dir is not set, we do not download ucs!\n";
-         }
-         if ((defined $j->{'options'}{'remove_created_ucs'}) &&
-             ($j->{'options'}{'remove_created_ucs'} eq 'yes')){
-           # cleanup
-           print $tee "  . removing ucs we have created\n";
-           $k->deleteResource( $z->{name} . '.ucs', 'ucs' );
-         }
+        }
+        my $k = new CAudit( $host, $usr, $pass, $cport );
+        my $passw = '';
+        if (defined $j->{'options'}{'ucs-secret'} and $j->{'options'}{'ucs-secret'} ne "") { $passw = $j->{'options'}{'ucs-secret'} }
+        if ($popts->get('ucs_secret') ne '') { $passw = $popts->get('ucs_secret'); }
+        if ($passw ne '') {
+          print $tee "  . \033[34mcreating encrypted ucs archive\033[0m\n";
+          $k->createUcs( $z->{name}, $passw );
+        } else {
+          $k->createUcs( $z->{name} );
+        }
+        print $tee "  . ucs saved into: $z->{name}\n";
+        if ($wDir ne '') {
+          $k->downloadResource('ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
+        } else {
+          print $tee "+-- note: working dir is not set, we do not download ucs!\n";
+        }
+        if ((defined $j->{'options'}{'remove_created_ucs'}) && ($j->{'options'}{'remove_created_ucs'} eq 'yes')) {
+          # cleanup
+          print $tee "  . removing ucs we have created\n";
+          $k->deleteResource( $z->{name} . '.ucs', 'ucs' );
+        }
       }
       case 'MAKE_SCF' {
         print $tee "+-- [step: $step] make system scf archive\n";

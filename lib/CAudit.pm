@@ -228,7 +228,8 @@ sub uploadFile
       }
     }
   }
-  print "+ final local resource path is: $localFile\n";
+  
+  # print "+ final local resource path is: $localFile\n";
 
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:System/ConfigSync')
