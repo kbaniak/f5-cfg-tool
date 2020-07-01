@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.3.3';
+my $version = '1.4.0';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -1195,7 +1195,9 @@ sub createResource
 # returns 0 or object
 sub existsResource {
   my ($name) = @_;
-  my $r = query2object( $URL . $name );
+  set_rflag('req_error_silent', 1);
+  my $r = query2object( $URL . $name, 'do_not_fail' );
+  set_rflag('req_error_silent', 0);
   if (defined $r->{'error'}){
     return 0;
   } else {
@@ -1470,6 +1472,8 @@ sub wait_for_api_event{
   }
 }
 
+#
+# install update ilx worspaces from archive files (.xz)
 sub load_ilx_workspace
 {
   my ($df) = @_;
@@ -1493,6 +1497,81 @@ sub load_ilx_workspace
         } else {
           print $tee "[ \033[31mFAILED\033[0m ] \n";
           print $tee Dumper( $r ) . "\n";
+        }
+      }
+    }
+  }
+}
+
+sub update_ilx_plug_ext_rd{
+  my ($pa, $plug, $rd) = @_;
+  my $r = query2object( $URL . "ilx/plugin/~$pa~$plug/extensions", 'do_not_fail' );
+  if (defined $r->{items}) {
+    foreach my $ptr (@{ $r->{items} }) {
+      my $ext = $ptr->{name};
+      my $js = JSON->new;
+      my $z = {
+        defaultRouteDomain => $rd
+      };
+      $js->pretty();
+      my $res = patchRequest( $URL . "ilx/plugin/~$pa~$plug/extensions/$ext", $js->encode( $z ) );
+      #print Dumper( $res );
+    }
+  }
+}
+
+#
+# install update ilx worspaces from archive files (.xz)
+sub load_ilx_plugins
+{
+  my ($df) = @_;
+  my $pa = 'Common';
+  
+  if (defined $df->{'ilx'} && defined $df->{'ilx'}{'plugins'}) {
+    my %pls  = %{ $df->{'ilx'}{'plugins'} };
+    foreach my $w (sort keys %pls) {
+      if (defined $pls{$w}{'workspace'}) {
+        my $ws = $pls{$w}{'workspace'};
+        my $rd = '0';
+        my $desc = 'batch-loaded-plugin';
+        my $publ = '';
+        
+        if (defined $pls{$w}{'partition'}) { $pa = $pls{$w}{'partition'} }
+        if (defined $pls{$w}{'route-domain'}) { $rd = $pls{$w}{'route-domain'} }
+        if (defined $pls{$w}{'description'}) { $desc = $pls{$w}{'description'} }
+        if (defined $pls{$w}{'publisher'}) { $publ = $pls{$w}{'publisher'} }
+        
+        print $tee ". configuring plugin: $w: from workspace: /$pa/$ws";
+        my $operation = 'create';
+        if (existsResource( "ilx/plugin/~$pa~$w")) {
+          print $tee " - updating - ";
+          $operation = 'modify';
+        }
+        # REST operation
+        my $js = JSON->new;
+        my $z = {
+          name          => $w, 
+          fromWorkspace => "/$pa/$ws",
+          partition     => $pa,
+          description   => $desc,
+        };
+        if ($publ ne '') {
+          $z->{'logPublisher'} = $publ;
+        }
+        $js->pretty();
+        my $res;
+        if ($operation eq 'create') {
+           $res = postRequest( $URL . 'ilx/plugin', $js->encode( $z ) );
+        } else {
+           $res = patchRequest( $URL . "ilx/plugin/~$pa~$w", $js->encode( $z ) );
+        }
+        #print Dumper( $res );
+        # verification
+        if (existsResource( "ilx/plugin/~$pa~$w")) {
+          if ($rd ne '0') { update_ilx_plug_ext_rd( $pa, $w, $rd ) }
+          print $tee "[ \033[32mSUCCESS\033[0m ]\n";
+        } else {
+          print $tee "[ \033[31mFAILED\033[0m ] \n";
         }
       }
     }
@@ -1807,6 +1886,11 @@ sub batch_mode {
         # load ILX workspace from an archive file
         print $tee "+-- [step: $step] install workspaces from an archive\n";
         load_ilx_workspace($j);
+      }
+      case 'LOAD_ILX_PLUGIN' {
+        # load ILX workspace from an archive file
+        print $tee "+-- [step: $step] configure ilx plugins\n";
+        load_ilx_plugins($j);
       }
       case 'MAKE_UCS' {
         # Note: since 12.1.0 you need to perform all operations using iControl or iControlREST
