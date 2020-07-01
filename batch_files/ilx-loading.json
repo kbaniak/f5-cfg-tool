@@ -1,0 +1,31 @@
+{
+  "system":      "any",
+  "system-ip":   "*",
+  "sw-version":  "*",
+  "author":      "Krystian Baniak",
+  "version":     "1.0",
+  "description": "MoP: load ilx workspaces and plugins",
+  "steps": [
+    "LOAD_ILX_PLUGIN"
+  ],
+  "ilx": {
+    "workspaces": {
+      "mm1": { "archive": "WKS_LDAP_1_1_x.tgz" }
+    },
+    "plugins": {
+      "pl1": { 
+        "workspace": "mm1", 
+        "partition": "Common", 
+        "description": "test plugin", 
+        "route-domain": "RD_Prod", 
+        "publisher": "/Common/pub1"
+      }
+    }
+  },
+  "options": {
+    "working-directory":  "./",
+    "base_location":       "./",
+    "search_path":         [ "ilx" ]
+  }
+}
+

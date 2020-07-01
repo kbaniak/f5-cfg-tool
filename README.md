@@ -25,6 +25,7 @@ Supported features and software versions:
 - inline comand line batch mode
 - uploading files on F5 device, executing scripts and downloading files from F5 system
 - merging configuration sets using tmsh merge functionality
+- managing ILX workspaces (since version 1.4.0) and plugins
 
 Developped in perl script language, may be used as standalone script or in a docker/podman container - see instalation notes below.
 
@@ -258,15 +259,20 @@ Batch file contains sections that govern how it is processed:
    LOAD_DEFAULT        : load sys config default
    LOAD_DG             : load data groups type external: [ Hash(datagroup) of { source } ]
    LOAD_IFILES         : load iFiles: [ Hash(ifile) of { source } ]
+   LOAD_ILX            : load ILX worskpaces
+   LOAD_ILX_PLUGINS    : load ILX plugins
    LOAD_MONITORS       : load external [ Hash(monitors) of { source } ]
    LOAD_RULES          : load iRules from baseline directory: [ Hash(rules) of { priority } ]
    MAKE_SCF            : create single configuration file backup (inlcuding a tar file)
    MAKE_UCS            : create and download ucs archive
    MSET:name           : merge set reference, name indicates named mereg set to be invoked
+   MCPD_FORCELOAD      : marks mcpd forceload flag for the next reboot
    REBIND_VS           : attach iRule to virtual servers: [ Hash(virtuals) of { site, rules } or [] ]
+   REBOOT              : reboots current host (all blades)
    RECERT              : create iRule certificates
    RENAME              : rename configuration objects: [ Hash(rename) ]
    RESET_HOST          : reset host to original batch defined name or ip address
+   RESTART             : runs clsh bigstart restart on current host
    RSET:name           : merge specific iRule set defined in ruleset setion of a batch file
    SAVE                : save configuration on a F5 unit
    SYNC                : synchronize a F5 cluster
@@ -277,6 +283,7 @@ Batch file contains sections that govern how it is processed:
    VERIFY              : verify that all operations are going to be successful
    VERIFY_SET:name     : run verification procedure on a verifyset. Verify set must inlude a list of objects
                          that specify tpe and set of items to check
+   WAIT_FOR:event      : waits for event to happen: cluster node become event = { online, standby, active }
 
  list of batch options to be used in options section in json definition:
    base_location       : indicates directory where to look for resource files
