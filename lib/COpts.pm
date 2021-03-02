@@ -66,6 +66,12 @@ my $BDEFS = {
   "RESTART"        => { usage => "runs clsh bigstart restart on current host" },
   "WAIT_FOR:event" => { usage => "waits for event to happen: cluster node become event = { online, standby, active }" },
   "MCPD_FORCELOAD" => { usage => "marks mcpd forceload flag for the next reboot" },
+  "GET_ZONES"      => { usage => "list ZoneRunner zones" },
+  "GET_ZONE_INFO:view"       => { usage => "get ZoneRunner zone information" },
+  "GET_ZONE_RRS:zone:view"   => { usage => "get ZoneRunner resource records information" },
+  "ADD_ZONE_A:zone:view:name:ip:ttl"  => { usage => "add ZoneRunner A resource record" },
+  "DEL_ZONE_A:zone:view:name:ip:ttl"  => { usage => "delete ZoneRunner A resource record" },
+  "ZRSET:name"     => { usage => "process records from a named zonerunner list" },
 };
 
 my $BOPTS = {

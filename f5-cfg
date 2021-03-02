@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.0';
+my $version = '1.4.2';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -115,6 +115,7 @@ if ($opts{'h'}){
    -s           : save config
    -S           : sync cluster
    -w           : working directory
+   -l name      : affect -a and -A by unifying the name of the resource
    -b name      : batch mode that uses json file as input
    -B steps     : semicolon delimited list of steps, mutually exclusive with -b option
    -Z step      : select step set from a step set list, used only with a -b option
@@ -558,9 +559,15 @@ sub update_host {
   }
 
   # update all globals
-  $URL_BARE = "https://$host/";
-  $URL = "https://$host/mgmt/tm/";
-  $URLB = "https://$host/mgmt/shared/authn/login";
+  if ($cport != 443) {
+    $URL_BARE = "https://$host:$cport/";
+    $URL   = "https://$host:$cport/mgmt/tm/";
+    $URLB  = "https://$host:$cport/mgmt/shared/authn/login";
+  } else {
+    $URL_BARE = "https://$host/";
+    $URL = "https://$host/mgmt/tm/";
+    $URLB = "https://$host/mgmt/shared/authn/login";
+  }
   unless ($opts{'Q'}) { print $tee "+ host $host_name mapped to: [ $host ]\n"; }
 
   # perform auth cache scan if needed
@@ -1589,7 +1596,7 @@ sub batch_mode {
 
   my $j = {
     options => { },
-    steps => qw()
+    steps => [ ]
   };
 
   if ($md eq 'file') {
@@ -1704,7 +1711,7 @@ sub batch_mode {
     my @otgt = split( ':', $step);
     my $cindex = 0;
     my $cabrt = 1;
-    if ($#otgt == 1) {
+    if ($#otgt >= 1) {
       switch ($otgt[0]) {
         case 'DELAY' {
           sleep($otgt[1]);
@@ -1791,6 +1798,104 @@ sub batch_mode {
               # kx is an object: type - icr path,  set - list of items to check
               check_icr_path( $kx, $j->{'options'} );
             }
+          }
+        }
+        case 'GET_ZONE_INFO' {
+          my $view = $otgt[2] || 'external';
+          my $zone = $otgt[1];
+          print $tee "+-- [step: $step] geting ZoneRunner zone information: $view/$zone\n";
+          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $zs = $k->getZoneInfo($view, $zone);
+          print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
+          foreach my $prop (sort keys %{ $zs->[0] }) {
+            if ($prop eq 'option_seq') {
+              my $seqs = join(@{ $zs->[0]{$prop} }, ' ');
+              print $tee "  $prop: $seqs\n";
+            } else {
+              print $tee "  $prop: $zs->[0]{$prop}\n";
+            }
+          }
+        }
+        case 'GET_ZONE_RRS' {
+          my $view = $otgt[2] || 'external';
+          my $zone = $otgt[1];
+          print $tee "+-- [step: $step] geting ZoneRunner rrs information: $view/$zone\n";
+          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $zs = $k->getZoneRecords($view, $zone);
+          print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
+          foreach my $rec (sort @{ $zs->[0] }) {
+            print $tee "  $rec\n";
+          }
+        }
+        case 'ADD_ZONE_A' {
+          # params: zone:view:name:ip:ttl
+          my $zone = $otgt[1];
+          my $view = $otgt[2];
+          my $ttl = $otgt[5] || 0;
+          print $tee "+-- [step: $step] adding record of type A to ZoneRunner: $view/$zone\n";
+          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my @rrs = qw();
+          push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
+          my $zs = $k->processZoneRecord('create', $view, $zone, 'A', \@rrs );
+          print $tee "result: $zs\n";
+        }
+        case 'DEL_ZONE_A' {
+          # params: zone:view:name:ip:ttl
+          my $zone = $otgt[1];
+          my $view = $otgt[2];
+          my $ttl = $otgt[5] || 0;
+          print $tee "+-- [step: $step] removing record of type A from ZoneRunner: $view/$zone\n";
+          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my @rrs = qw();
+          push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
+          my $zs = $k->processZoneRecord('delete', $view, $zone, 'A', \@rrs );
+          print $tee "result: $zs\n";
+        }
+        case 'ZRSET' {
+          my $err = 0;
+          print $tee "+-- [step: $step] processing ZoneRunner set: $otgt[1]\n";
+          if ((defined $j->{'zoneset'}) && (defined $j->{'zoneset'}{$otgt[1]})) {
+            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $idx = 1;
+            if (exists $j->{'zoneset'}{$otgt[1]}) {
+              foreach my $kx ( @{ $j->{'zoneset'}{$otgt[1]} }) {
+                # process operation set
+                print $tee "opset [$idx] ";
+                if (exists($kx->{'type'}) and exists($kx->{'view'}) and exists($kx->{'db'})) {
+                  # zone records can be given in a form of a file
+                  if (exists($kx->{'items'}) and exists($kx->{'class'})) {
+                    # items in a table and confined to given record type
+                    my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, $kx->{'class'}, $kx->{'items'});
+                    print $tee "--> $result\n";
+                    $idx++;
+                  } elsif (exists($kx->{'itemSource'}) and ($kx->{'itemSource'} ne '')) {
+                    # items in a separate file
+                    my $js = parseJsonFile($j->{'options'}, $kx->{'itemSource'});
+                    foreach my $rtype (keys %{ $js->{'records'} }) {
+                      print $tee "processing records: $rtype\n";
+                      my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, uc($rtype), $js->{'records'}{$rtype});
+                      print $tee "($rtype)--> $result\n";
+                    }
+                    $idx++;
+                  } else {
+                    $err = 3;
+                    print $tee "--> \033[31mcorrupted\033[0m\n";
+                    last;
+                  }
+                } else {
+                  $err = 2;
+                  print $tee "--> \033[31mfailed\033[0m\n";
+                  last;
+                }
+              }
+            } else {
+              $err = 1;
+            }
+          }
+          if ($err > 0) {
+            print $tee "\033[31m!malformed zoneset definition found ($err)! \033[0m\n";
+          } else {
+            print $tee "complete \n";
           }
         }
         case 'DON_PROVISION' {
@@ -1917,7 +2022,7 @@ sub batch_mode {
         }
         print $tee "  . ucs saved into: $z->{name}\n";
         if ($wDir ne '') {
-          $k->downloadResource('ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
+          $k->downloadResource($j->{'options'}, 'ucs', $z->{name} . ".ucs", $wDir . $z->{name} . ".ucs" );
         } else {
           print $tee "+-- note: working dir is not set, we do not download ucs!\n";
         }
@@ -1961,8 +2066,8 @@ sub batch_mode {
           }
         }
         if ($wDir ne '') {
-          $k->downloadResource('file', "/var/local/scf/" . $fname, $wDir . $fname );
-          $k->downloadResource('file', "/var/local/scf/" . $fname . ".tar", $wDir . $fname . ".tar" );
+          $k->downloadResource($j->{'options'}, 'file', "/var/local/scf/" . $fname, $wDir . $fname );
+          $k->downloadResource($j->{'options'}, 'file', "/var/local/scf/" . $fname . ".tar", $wDir . $fname . ".tar" );
         } else {
           print $tee "+-- note: working dir is not set, we do not download scf!\n";
         }
@@ -2310,8 +2415,20 @@ sub batch_mode {
           foreach my $fl (sort keys %{ $j->{'retrieve'} }) {
             print $tee "  . resource from a location: $j->{'retrieve'}{$fl}\n";
             my $k = new CAudit( $host, $usr, $pass, $cport );
-            $k->downloadResource( 'file', $j->{'retrieve'}{$fl}, $j->{'options'}{'store_location'} . '/' . $fl );
+            $k->downloadResource($j->{'options'}, 'file', $j->{'retrieve'}{$fl}, $j->{'options'}{'store_location'} . '/' . $fl );
           }
+        } else {
+          print $tee "\033[31m! store_location or retrieve set not given\033[0m \n";
+        }
+      }
+      case 'GET_ZONES' {
+        print $tee "+-- [step: $step] geting ZoneRunner zone names\n";
+        my $k = new CAudit( $host, $usr, $pass, $cport );
+        my $view = 'external';
+        my $zs = $k->getZones($view);
+        print $tee "configured zones in view \033[32m$view\033[0m\n";
+        foreach my $zn (sort @{ $zs }) {
+          print $tee "  $zn->{'zone_name'}\n";
         }
       }
       else {
@@ -2320,6 +2437,38 @@ sub batch_mode {
     } # SWITCH
   }
 }
+
+# determine the file location in a batch
+sub parseJsonFile
+{
+  my ($opts, $fname) = @_;
+  my $json = qw();
+  if (defined($opts->{"base_location"})) {
+    my $localFile = $opts->{"base_location"} . $fname;
+    if (! -e $localFile) {
+      if (defined($opts->{"search_path"})) {
+        #
+        # TODO: cycle through search locations, so far only first item from the list
+        foreach my $subpath (@{ $opts->{'search_path'} }) {
+          $localFile = $opts->{"base_location"} . $subpath . "/" . $fname;
+          if (-e $localFile) {
+            last;
+          }
+        }
+      }
+    }
+    if (-e $localFile) {
+      my $content;
+      open my $fh, "<", $localFile or terminate_with_error($tee, 'file open', "Error opening resource file: $localFile");
+      read $fh, my $buffer, -s $fh;
+      close($fh);
+      $json = decode_json( $buffer );
+    }
+  }
+  return $json;
+}
+
+# parse filename from a path
 sub parseFileToken
 {
   my @fn = split( '/', shift );

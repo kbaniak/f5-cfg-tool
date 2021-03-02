@@ -6,8 +6,9 @@ Uses iControl SOAP and iControlREST API on F5 devices to facilitate operations a
 - automate configuration tasks using a batch mode. This tool accepts json formatted batch files that specify actions to perform on a remote F5 system(s),
 - run reports that collect information from selected configuration entities and present it in a tabular form,
 - REST API troubleshooting and debug.
+- *new* manage ZoneRunner dns zones from command line and in a batch mode.
 
-The primary application of this toll is to automate frequently used maintenance tasks, perform config audits and ensure maitenence window time is kept to minimum by eliminating human error factor.
+The primary application of this tool is to automate frequently used maintenance tasks, perform config audits and ensure maitenence window time is kept to minimum by eliminating human error factor.
 
 Supported features and software versions:
 - F5 software versions >= 11.x
@@ -29,9 +30,55 @@ Supported features and software versions:
 
 Developped in perl script language, may be used as standalone script or in a docker/podman container - see instalation notes below.
 
+## Usage
+
+Just run `f5-cfg -h` to see all availabel options.
+
+One of the basic needs is to fast recon on the F5 device and provide summary of what we are dealing with. We may use `-i -k` options together with other mandatory switches:
+- `-f` : asks for password
+- `-u admin` : specify user account to connect with
+- `-t IP_address` : target is the management interface's IP address of the F5 device 
+
+The result of this command is the report of iRules their digests as well as allocations of iRules to virtual servers.
+
+```
+f5-cfg -t 10.10.10.10 -u admin -f -i -k
+. runtime location: /Images/Shared/f5-rest-tools, rundir: /home/krystian
+
+(C) 2020, Krystian Baniak <krystian.baniak@exios.pl>,  F5 restful configuration tool, version: 1.4.9
+> enter f5 device password please : 
++ host 172.16.24.29 mapped to: [ 172.16.24.29 ]
+system properties: 
+                                   baseMac: 00:0c:29:68:14:96
+                     bigipChassisSerialNum: 564dd107-0f67-11be-804044681496
+                                  fovState: active
+                             marketingName: BIG-IP Virtual Edition
+                                  platform: Z100
+                             active volume: HD1.1
+                                soft build: 0.0.9
+                              soft version: 15.1.2
++ analysing iRules and their alloactions ...
+
+                                       name |            partition | hash                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+                          test_sip_sreening |               Common | b72fa4e5723e3b4cbe4dac1215d44edea2161e54
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+                                       name |    partition |              application service | list of numbered iRules                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+                              VS_DNS_UDP_GN |       Common |                                - |                                         
+                                VS_SIP_TEST |       Common |                                - | [ 1]  /Common/test_sip_sreening               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
++ unused iRules:
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+```
+
 ## Installation
 First, clone the repository on your computer. Afterwards, follow the procedure:
-```
+
+```{bash}
 git clone https://github.com/kbaniak/f5-cfg-tool
 cd f5-cfg-tool
 ./f5-cfg -h
@@ -39,14 +86,19 @@ cd f5-cfg-tool
 
 ## Docker/podman installation and use
 Compile a podman image
+
 ```
 podman build --format=docker -t f5-cfg .
 ```
+
 Run a container:
+
 ```
 podman run --rm -it f5-cfg bash
 ```
+
 When inside a container (using bash shell) one may invoke a f5-cfg tool, like on these example that is used to create UCS archive on an F5:
+
 ```
 podman run -it --rm f5-cfg bash
 [root@d045ed96d5dd migration]# f5-cfg -t 10.128.1.47 -B MAKE_UCS -Oucs_secret=test123
@@ -64,14 +116,18 @@ podman run -it --rm f5-cfg bash
 ++ downloading resource: migrate-auto-10.128.1.47-020620-171800.ucs 
 ++ total bytes transferred: 7538951
 ```
+
 Now the file will be stored in the local directory:
+
 ```
 [root@e5728b9f8c42 migration]# ls
 migrate-auto-10.128.1.47-020620-171800.ucs
 [root@e5728b9f8c42 migration]# 
 ```
+
 ### Notes for Fedora (32) podman selinux 
-When one wants to bind a local forlder to migration directory of the container/pod we have to relabel the source directory.
+
+When one wants to bind a local folder to a migration directory of the container/pod we have to relabel the source directory.
 
 Let's assume we have ./test directory.
 ```
@@ -87,7 +143,8 @@ test/
 0 directories, 1 file
 ```
 
-## Examples
+## Examples and use cases
+
 ### Inspect F5 device manifest and print list of iRules
 ```
 ./f5-cfg -t 1.1.1.1 -u admin -p admin -i -k
@@ -243,9 +300,9 @@ Batch file contains sections that govern how it is processed:
    supress_log         : supress log audit to a file
    ucs_secret          : passphrase used to encrypt ucs archive for MAKE_UCS batch command
 
-
  list of known batch commands
    ABORT               : abort at a given step
+   ADD_ZONE_A:zone:view:name:ip:ttl: add ZoneRunner A resource record
    COMMAND             : execute shell comamnd: [ Array(command) ]
    COMPARE_DBSET       : compare db vars on target system with definitions <dbvars> from a batch file
    COMPARE_RSETS       : compare irule sets (partitions) with local files
@@ -254,7 +311,11 @@ Batch file contains sections that govern how it is processed:
    CSET:name           : command set reference, name indicated named command set to be invoked
    DELAY:seconds       : wait seconds before continuing
    DELETIONS           : delete objects from the f5: [ Hash(delete) of [type,priority] ]
+   DEL_ZONE_A:zone:view:name:ip:ttl: delete ZoneRunner A resource record
    DOWNLOAD            : download file from remote system
+   GET_ZONES           : list ZoneRunner zones
+   GET_ZONE_INFO:view  : get ZoneRunner zone information
+   GET_ZONE_RRS:zone:view: get ZoneRunner resource records information
    LOADTMSH            : load config file and merge it: [ Array(tmsh-merge) ]
    LOAD_DEFAULT        : load sys config default
    LOAD_DG             : load data groups type external: [ Hash(datagroup) of { source } ]
@@ -265,8 +326,8 @@ Batch file contains sections that govern how it is processed:
    LOAD_RULES          : load iRules from baseline directory: [ Hash(rules) of { priority } ]
    MAKE_SCF            : create single configuration file backup (inlcuding a tar file)
    MAKE_UCS            : create and download ucs archive
-   MSET:name           : merge set reference, name indicates named mereg set to be invoked
    MCPD_FORCELOAD      : marks mcpd forceload flag for the next reboot
+   MSET:name           : merge set reference, name indicates named mereg set to be invoked
    REBIND_VS           : attach iRule to virtual servers: [ Hash(virtuals) of { site, rules } or [] ]
    REBOOT              : reboots current host (all blades)
    RECERT              : create iRule certificates
@@ -284,6 +345,7 @@ Batch file contains sections that govern how it is processed:
    VERIFY_SET:name     : run verification procedure on a verifyset. Verify set must inlude a list of objects
                          that specify tpe and set of items to check
    WAIT_FOR:event      : waits for event to happen: cluster node become event = { online, standby, active }
+   ZRSET:name          : process records from a named zonerunner list
 
  list of batch options to be used in options section in json definition:
    base_location       : indicates directory where to look for resource files
