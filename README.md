@@ -6,7 +6,7 @@ Uses iControl SOAP and iControlREST API on F5 devices to facilitate operations a
 - automate configuration tasks using a batch mode. This tool accepts json formatted batch files that specify actions to perform on a remote F5 system(s),
 - run reports that collect information from selected configuration entities and present it in a tabular form,
 - REST API troubleshooting and debug.
-- *new* manage ZoneRunner dns zones from command line and in a batch mode.
+- **new** manage ZoneRunner dns zones from command line and in a batch mode.
 
 The primary application of this tool is to automate frequently used maintenance tasks, perform config audits and ensure maitenence window time is kept to minimum by eliminating human error factor.
 
@@ -32,7 +32,7 @@ Developped in perl script language, may be used as standalone script or in a doc
 
 ## Usage
 
-Just run `f5-cfg -h` to see all availabel options.
+Just run `f5-cfg -h` to see all available options.
 
 One of the basic needs is to fast recon on the F5 device and provide summary of what we are dealing with. We may use `-i -k` options together with other mandatory switches:
 - `-f` : asks for password
