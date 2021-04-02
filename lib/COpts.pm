@@ -72,6 +72,7 @@ my $BDEFS = {
   "ADD_ZONE_A:zone:view:name:ip:ttl"  => { usage => "add ZoneRunner A resource record" },
   "DEL_ZONE_A:zone:view:name:ip:ttl"  => { usage => "delete ZoneRunner A resource record" },
   "ZRSET:name"     => { usage => "process records from a named zonerunner list" },
+  "DSET:name"      => { usage => "download list of files from a downloadset dictionary from a batch file, keyed by a name" }
 };
 
 my $BOPTS = {

@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.2';
+my $version = '1.4.3';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -1759,6 +1759,16 @@ sub batch_mode {
               if (defined $r->{'commandResult'}){
                 printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
               }
+            }
+          }
+        }
+        case 'DSET' {
+          print $tee "+-- [step: $otgt[0]] download set execute: $otgt[1]\n";
+          if ((defined $j->{'downloadset'}) && (defined $j->{'downloadset'}{$otgt[1]}) && (defined $j->{'options'}{'store_location'})) {
+            my $k = new CAudit( $host, $usr, $pass, $cport );
+            foreach my $kx ( @{ $j->{'downloadset'}{$otgt[1]} }) {
+              print $tee "   . retrieve file: \x1b[32m$kx\x1b[0m\n";
+              $k->downloadResource($j->{'options'}, 'file', $kx, $j->{'options'}{'store_location'} . '/' . parseFileToken($kx) );
             }
           }
         }

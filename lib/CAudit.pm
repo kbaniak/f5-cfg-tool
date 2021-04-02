@@ -128,9 +128,6 @@ sub processZoneRecord
   }
 
   foreach my $rs (@records) {
-    unless ($rs->{'domain_name'} =~ /.+$zone\$/) {
-      $rs->{'domain_name'} .= ".$zone";
-    }
     unless (exists $rs->{'ttl'}) {
       $rs->{'ttl'} = 0;
     }
