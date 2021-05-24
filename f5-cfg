@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.3';
+my $version = '1.4.4';
 
 # --------- DEB -----------------
 my $debug_vs = 0;
@@ -1870,21 +1870,25 @@ sub batch_mode {
             if (exists $j->{'zoneset'}{$otgt[1]}) {
               foreach my $kx ( @{ $j->{'zoneset'}{$otgt[1]} }) {
                 # process operation set
-                print $tee "opset [$idx] ";
+                print $tee ">>>> opset [$idx] ctype: \033[35m$kx->{type}\033[0m\n";
                 if (exists($kx->{'type'}) and exists($kx->{'view'}) and exists($kx->{'db'})) {
                   # zone records can be given in a form of a file
                   if (exists($kx->{'items'}) and exists($kx->{'class'})) {
                     # items in a table and confined to given record type
                     my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, $kx->{'class'}, $kx->{'items'});
-                    print $tee "--> $result\n";
+                    print $tee "  . --> $result\n";
                     $idx++;
                   } elsif (exists($kx->{'itemSource'}) and ($kx->{'itemSource'} ne '')) {
                     # items in a separate file
                     my $js = parseJsonFile($j->{'options'}, $kx->{'itemSource'});
                     foreach my $rtype (keys %{ $js->{'records'} }) {
-                      print $tee "processing records: $rtype\n";
-                      my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, uc($rtype), $js->{'records'}{$rtype});
-                      print $tee "($rtype)--> $result\n";
+                      my $nrec = scalar @{ $js->{records}{$rtype} };
+                      if ($nrec > 0) {
+                        # avoid stupid work
+                        print $tee "  . processing records: $rtype $nrec\n";
+                        my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, uc($rtype), $js->{'records'}{$rtype});
+                        print $tee "  . ($rtype)--> $result\n";
+                      }
                     }
                     $idx++;
                   } else {
@@ -2473,6 +2477,8 @@ sub parseJsonFile
       read $fh, my $buffer, -s $fh;
       close($fh);
       $json = decode_json( $buffer );
+    } else {
+      terminate_with_error($tee, 'file open', "Error locating file: $localFile");
     }
   }
   return $json;
