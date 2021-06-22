@@ -1873,6 +1873,7 @@ sub batch_mode {
             my $r = generate_JSON_response({ view => $view, zone => $zone });
             my @items;
             $js->pretty();
+						$js->canonical(1);
 
             foreach my $rec (sort @{ $zs->[0] }) {
               push @items, $rec;
@@ -2069,9 +2070,13 @@ sub batch_mode {
         # ucs files created via REST is not available to iControl
         print $tee "+-- [step: $step] make system archive\n";
         #my $js = JSON->new;
+        my $faName = "migrate-auto-${host_name}-${tmp_stmp}"; 
+        if ($Label ne '') {
+          $faName = "migrate-auto-${Label}-${host_name}_${tmp_stmp}";
+        }
         my $z = {
           command => "save",
-          name => "migrate-auto-${host_name}-${tmp_stmp}"
+          name => $faName
         };
         if (defined $j->{'options'}{'ucs-file-name'}) {
            $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
