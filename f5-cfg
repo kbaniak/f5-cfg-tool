@@ -45,7 +45,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.5';
+my $version = '1.4.6';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -127,7 +127,7 @@ if ($opts{'h'}){
    -Q           : quiet mode - supress logs to a file
    -O opts      : list of options param=value,param=value, use %20 to escape a white space
                   example:  base=gen8.2/test,label=ala%20ma%20kota
-                  
+
  --------------------------------------------------------------------------------------------
 
  list of known options:
@@ -255,8 +255,10 @@ if ($popts->get('bigiq') ne '') {
 #-----------------------------------------------
 # batch mode
 if ($opts{'b'}) {
-  print $tee "+ running in a batch mode\n";
-  print $tee "+-- processing input file: \x1b[33m$opts{'b'}\x1b[0m\n";
+  if (!$opts{Q}) {
+    print $tee "+-- running in a batch mode\n";
+    print $tee "+-- processing input file: \x1b[33m$opts{'b'}\x1b[0m\n";
+  }
   if ($opts{'B'}) { print $tee "!-- you cannot use -b and -B simultaneously\n"; exit 4; }
   batch_mode( $opts{'b'}, 'file' );
   exit;
@@ -695,7 +697,7 @@ sub query2object
 {
   my $uri = shift;
   my $mode = shift || 'no';
-  
+
   return decode_json( query2json( $uri, $mode ) );
 }
 
@@ -758,7 +760,7 @@ sub postRequest
       print $tee "--- response: $resp\n";
     }
     unless ($rflags{'req_not_fatal'}) { exit } else { return 'failed' }
-  } 
+  }
 
   return decode_json($res->content);
 }
@@ -1499,7 +1501,7 @@ sub load_ilx_workspace
   my ($df) = @_;
   my $k = new CAudit( $host, $usr, $pass, $cport );
   my $pa = 'Common';
-  
+
   if (defined $df->{'ilx'} && defined $df->{'ilx'}{'workspaces'}) {
     my %wks  = %{ $df->{'ilx'}{'workspaces'} };
     foreach my $w (sort keys %wks) {
@@ -1546,7 +1548,7 @@ sub load_ilx_plugins
 {
   my ($df) = @_;
   my $pa = 'Common';
-  
+
   if (defined $df->{'ilx'} && defined $df->{'ilx'}{'plugins'}) {
     my %pls  = %{ $df->{'ilx'}{'plugins'} };
     foreach my $w (sort keys %pls) {
@@ -1555,12 +1557,12 @@ sub load_ilx_plugins
         my $rd = '0';
         my $desc = 'batch-loaded-plugin';
         my $publ = '';
-        
+
         if (defined $pls{$w}{'partition'}) { $pa = $pls{$w}{'partition'} }
         if (defined $pls{$w}{'route-domain'}) { $rd = $pls{$w}{'route-domain'} }
         if (defined $pls{$w}{'description'}) { $desc = $pls{$w}{'description'} }
         if (defined $pls{$w}{'publisher'}) { $publ = $pls{$w}{'publisher'} }
-        
+
         print $tee ". configuring plugin: $w: from workspace: /$pa/$ws";
         my $operation = 'create';
         if (existsResource( "ilx/plugin/~$pa~$w")) {
@@ -1570,7 +1572,7 @@ sub load_ilx_plugins
         # REST operation
         my $js = JSON->new;
         my $z = {
-          name          => $w, 
+          name          => $w,
           fromWorkspace => "/$pa/$ws",
           partition     => $pa,
           description   => $desc,
@@ -1609,12 +1611,10 @@ sub batch_mode {
 
   my $j = {
     options => { },
-    steps => [ ]
+    steps => [ ],
+    quiet => 0
   };
 
-  if ($opts{'J'}) {
-    $j->{options}{encoding} = 'json';
-  }
 
   if ($md eq 'file') {
     if (index($fn, "/") < 0 or substr($fn,0,2) eq "./") {
@@ -1646,6 +1646,12 @@ sub batch_mode {
 
   # this is for extended tests
   $j->{'options'}{'rundir'} = $rundir;
+
+  # json encoding
+  if ($opts{J}) { $j->{options}{encoding} = 'json'; }
+
+  # quiet mode for batch
+  if ($opts{Q}) { $j->{quiet} = 1; }
 
   # options parsing
   if (defined $j->{'options'}{'working-directory'}) {
@@ -1686,8 +1692,9 @@ sub batch_mode {
 
   if (not (defined $j->{options}{encoding})) {
     print $tee "+ final batch workdir: $wDir\n";
-    print $tee "+ final batch basedir: $j->{'options'}{'base_location'}\n";
-    print $tee "+ final batch ruledir: $j->{'options'}{'rules_location'}\n";
+    print $tee "+ final batch basedir: $j->{options}{base_location}\n";
+    print $tee "+ final batch ruledir: $j->{options}{rules_location}\n";
+    print $tee "+ batch output encoding: $j->{options}{encoding}\n";
   }
 
   #verify system matches description
@@ -1705,7 +1712,7 @@ sub batch_mode {
     }
   }
 
-  if (defined $j->{'description'}) {
+  if ((defined $j->{'description'}) and (!$j->{quiet})) {
     printf $tee "\x1b[7m<batch version=\"%s\" author=\"%s\">\n", $j->{'version'}, $j->{'author'};
     print  $tee "  batch provided for: $j->{'system-ip'}\n";
     print  $tee "  description: $j->{'description'}\n";
@@ -1716,7 +1723,7 @@ sub batch_mode {
   my $pxstep = $j->{'steps'};
   if (($bstep ne "") and (defined $j->{'stepset'})) {
     if (defined $j->{'stepset'}{$bstep}) {
-      print $tee "+-- loading step set: $bstep\n";
+      if (!$j->{quiet}) { print $tee "+-- loading step set: $bstep\n"; }
       $pxstep = $j->{'stepset'}{$bstep};
     } else {
       print $tee "-- failed to find a step set: $bstep\n";
@@ -1735,13 +1742,13 @@ sub batch_mode {
           sleep($otgt[1]);
         }
         case 'WAIT_FOR' {
-          print $tee "+-- [step: $otgt[0]] pause batch until the event: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $otgt[0]] pause batch until the event: $otgt[1]\n"; }
           wait_for_api_event( $otgt[1] );
         }
         case 'USE_HOST' {
           if ($otgt[1] =~ /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/) {
             if ($otgt[1] ne $host) {
-              print $tee "+ switching host from: $host to: \033[35m$otgt[1]\033[0m\n ";
+              if (!$j->{quiet}) { print $tee "+ switching host from: $host to: \033[35m$otgt[1]\033[0m\n "; }
               $alternativeHost = $host;
               &update_host( $otgt[1] );
             }
@@ -1760,7 +1767,7 @@ sub batch_mode {
               } else {
                 $ksrc = parseFileToken($kx);
               }
-              print $tee "+-- [step: $step] uploading object: $kx from $ksrc\n";
+              if (!$j->{quiet}) { print $tee "+-- [step: $step] uploading object: $kx from $ksrc\n"; }
               if (defined $j->{'options'}{'base_location'}){
                 my $k = new CAudit( $host, $usr, $pass, $cport );
                 $k->uploadFile( $j->{'options'}, $ksrc, $kx );
@@ -1769,10 +1776,10 @@ sub batch_mode {
           }
         }
         case 'CSET' {
-          print $tee "+-- [step: $otgt[0]] command set execute: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $otgt[0]] command set execute: $otgt[1]\n"; }
           if ((defined $j->{'commandset'}) && (defined $j->{'commandset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'commandset'}{$otgt[1]} }) {
-              print $tee "   . executing command: \x1b[32m$kx\x1b[0m\n";
+              if (!$j->{quiet}) { print $tee "   . executing command: \x1b[32m$kx\x1b[0m\n"; }
               my $r = runGenericCommand( $kx );
               if (defined $r->{'commandResult'}){
                 printf $tee "  . (!!) unexpected command result: %s", $r->{'commandResult'};
@@ -1781,27 +1788,27 @@ sub batch_mode {
           }
         }
         case 'DSET' {
-          print $tee "+-- [step: $otgt[0]] download set execute: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $otgt[0]] download set execute: $otgt[1]\n"; }
           if ((defined $j->{'downloadset'}) && (defined $j->{'downloadset'}{$otgt[1]}) && (defined $j->{'options'}{'store_location'})) {
             my $k = new CAudit( $host, $usr, $pass, $cport );
             foreach my $kx ( @{ $j->{'downloadset'}{$otgt[1]} }) {
-              print $tee "   . retrieve file: \x1b[32m$kx\x1b[0m\n";
+              if (!$j->{quiet}) { print $tee "   . retrieve file: \x1b[32m$kx\x1b[0m\n"; }
               $k->downloadResource($j->{'options'}, 'file', $kx, $j->{'options'}{'store_location'} . '/' . parseFileToken($kx) );
             }
           }
         }
         case 'RSET' {
-          print $tee "+-- [step: $step] updating a set of irules: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] updating a set of irules: $otgt[1]\n"; }
           if ((defined $j->{'ruleset'}) && (defined $j->{'ruleset'}{$otgt[1]})) {
             load_irules( $j, $otgt[1] );
           }
         }
         case 'MSET' {
-          print $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] merging tmsh config file set: $otgt[1]\n"; }
           if ((defined $j->{'mergeset'}) && (defined $j->{'mergeset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'mergeset'}{$otgt[1]} }) {
               if (defined $j->{'options'}{'base_location'}) {
-                print $tee "  . \x1b[34mmerging file: $kx\x1b[0m\n";
+                if (!$j->{quiet}) { print $tee "  . \x1b[34mmerging file: $kx\x1b[0m\n"; }
                 my $k = new CAudit( $host, $usr, $pass, $cport );
                 $k->uploadFile( $j->{'options'}, parseFileToken($kx), $kx );
               }
@@ -1820,7 +1827,7 @@ sub batch_mode {
           }
         }
         case 'VERIFY_SET' {
-          print $tee "+-- [step: $step] processing verification set: $otgt[1]\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] processing verification set: $otgt[1]\n"; }
           if ((defined $j->{'verifyset'}) && (defined $j->{'verifyset'}{$otgt[1]})) {
             foreach my $kx ( @{ $j->{'verifyset'}{$otgt[1]} }) {
               # kx is an object: type - icr path,  set - list of items to check
@@ -1849,7 +1856,7 @@ sub batch_mode {
             }
             print $tee $js->encode($r)
           } else {
-            print $tee "+-- [step: $step] geting ZoneRunner zone information: $view/$zone\n";
+            if (!$j->{quiet}) { print $tee "+-- [step: $step] geting ZoneRunner zone information: $view/$zone\n"; }
             my $k = new CAudit( $host, $usr, $pass, $cport );
             my $zs = $k->getZoneInfo($view, $zone);
             print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
@@ -1878,11 +1885,11 @@ sub batch_mode {
             foreach my $rec (sort @{ $zs->[0] }) {
               push @items, $rec;
             }
-            
+
             $r->{items} = \@items;
             print $tee $js->encode($r)
           } else {
-            print $tee "+-- [step: $step] geting ZoneRunner rrs information: $view/$zone\n";
+            if (!$j->{quiet}) { print $tee "+-- [step: $step] geting ZoneRunner rrs information: $view/$zone\n"; }
             my $k = new CAudit( $host, $usr, $pass, $cport );
             my $zs = $k->getZoneRecords($view, $zone);
             print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
@@ -1896,7 +1903,7 @@ sub batch_mode {
           my $zone = $otgt[1];
           my $view = $otgt[2];
           my $ttl = $otgt[5] || 0;
-          print $tee "+-- [step: $step] adding record of type A to ZoneRunner: $view/$zone\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] adding record of type A to ZoneRunner: $view/$zone\n"; }
           my $k = new CAudit( $host, $usr, $pass, $cport );
           my @rrs = qw();
           push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
@@ -1908,7 +1915,7 @@ sub batch_mode {
           my $zone = $otgt[1];
           my $view = $otgt[2];
           my $ttl = $otgt[5] || 0;
-          print $tee "+-- [step: $step] removing record of type A from ZoneRunner: $view/$zone\n";
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] removing record of type A from ZoneRunner: $view/$zone\n"; }
           my $k = new CAudit( $host, $usr, $pass, $cport );
           my @rrs = qw();
           push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
@@ -1916,54 +1923,87 @@ sub batch_mode {
           print $tee "result: $zs\n";
         }
         case 'ZRSET' {
-          my $err = 0;
-          print $tee "+-- [step: $step] processing ZoneRunner set: $otgt[1]\n";
+          my $err = '';
+          my @results = qw();
+          my $complete = 1;
+          if (!$j->{quiet}) { print $tee "+-- [step: $step] processing ZoneRunner set: $otgt[1]\n"; }
           if ((defined $j->{'zoneset'}) && (defined $j->{'zoneset'}{$otgt[1]})) {
             my $k = new CAudit( $host, $usr, $pass, $cport );
             my $idx = 1;
+            #
+            # Processing
+            #
             if (exists $j->{'zoneset'}{$otgt[1]}) {
+              # verification : pass 1
               foreach my $kx ( @{ $j->{'zoneset'}{$otgt[1]} }) {
-                # process operation set
-                print $tee ">>>> opset [$idx] ctype: \033[35m$kx->{type}\033[0m\n";
                 if (exists($kx->{'type'}) and exists($kx->{'view'}) and exists($kx->{'db'})) {
-                  # zone records can be given in a form of a file
                   if (exists($kx->{'items'}) and exists($kx->{'class'})) {
-                    # items in a table and confined to given record type
-                    my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, $kx->{'class'}, $kx->{'items'});
-                    print $tee "  . --> $result\n";
-                    $idx++;
+                    # zone records can be given in a form of a file
                   } elsif (exists($kx->{'itemSource'}) and ($kx->{'itemSource'} ne '')) {
                     # items in a separate file
-                    my $js = parseJsonFile($j->{'options'}, $kx->{'itemSource'});
-                    foreach my $rtype (keys %{ $js->{'records'} }) {
-                      my $nrec = scalar @{ $js->{records}{$rtype} };
-                      if ($nrec > 0) {
-                        # avoid stupid work
-                        print $tee "  . processing records: $rtype $nrec\n";
-                        my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, uc($rtype), $js->{'records'}{$rtype});
-                        print $tee "  . ($rtype)--> $result\n";
-                      }
-                    }
-                    $idx++;
                   } else {
-                    $err = 3;
-                    print $tee "--> \033[31mcorrupted\033[0m\n";
+                    $err = 'resource records not specified';
                     last;
                   }
                 } else {
-                  $err = 2;
-                  print $tee "--> \033[31mfailed\033[0m\n";
+                  $err = 'invalid syntax';
                   last;
                 }
               }
+              if ($err eq '') {
+                # executing : pass 2
+                foreach my $kx ( @{ $j->{'zoneset'}{$otgt[1]} }) {
+                  if (!$j->{quiet}) { print $tee ">>>> opset [$idx] ctype: \033[35m$kx->{type}\033[0m\n"; }
+                  if (exists($kx->{'type'}) and exists($kx->{'view'}) and exists($kx->{'db'})) {
+                    if (exists($kx->{'items'}) and exists($kx->{'class'})) {
+                      # items in a table and confined to given record type
+                      my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, $kx->{'class'}, $kx->{'items'});
+                      if (!$j->{quiet}) { print $tee "  . --> $result\n"; }
+                      push @results, { type => $kx->{type}, zone => $kx->{db}, class => $kx->{class}, result => $result };
+                      if ($result ne 'done') { $complete = 0; }
+                      $idx++;
+                    }
+                    elsif (exists($kx->{'itemSource'}) and ($kx->{'itemSource'} ne '')) {
+                      my $js = parseJsonFile($j->{'options'}, $kx->{'itemSource'});
+                      foreach my $rtype (keys %{ $js->{'records'} }) {
+                        my $nrec = scalar @{ $js->{records}{$rtype} };
+                        if ($nrec > 0) {
+                          if (!$j->{quiet}) { print $tee "  . processing records: $rtype $nrec\n"; }
+                          my $result = $k->processZoneRecord($kx->{'type'}, $kx->{'view'}, $kx->{'db'}, uc($rtype), $js->{'records'}{$rtype});
+                          if (!$j->{quiet}) { print $tee "  . ($rtype)--> $result\n"; }
+                          push @results, { type => $kx->{type}, zone => $kx->{db}, source => $kx->{itemSource}, result => $result };
+                          if ($result ne 'done') { $complete = 0; }
+                        }
+                      }
+                      $idx++;
+                    }
+                  }
+                }
+              }
             } else {
-              $err = 1;
+              $err = 'zrset definition missing';
             }
           }
-          if ($err > 0) {
-            print $tee "\033[31m!malformed zoneset definition found ($err)! \033[0m\n";
+          #
+          # reporting
+          #
+          if ((defined $j->{options}{encoding}) && ($j->{options}{encoding} eq 'json')) {
+            my $r = generate_JSON_response({ context => 'zrset' });
+            my $js = JSON->new;
+            $js->pretty();
+            if ($err ne '') {
+              $r->{error} = $err;
+            } else {
+              $r->{items} = \@results;
+            }
+            $r->{result} = ($complete) ? 'success' : 'failed';
+            print $tee $js->encode($r)
           } else {
-            print $tee "complete \n";
+            if ($err ne '') {
+              print $tee "\033[31m!malformed zoneset definition found ($err)! \033[0m\n";
+            } else {
+              print $tee ">>>> complete \n";
+            }
           }
         }
         case 'DON_PROVISION' {
@@ -2070,7 +2110,7 @@ sub batch_mode {
         # ucs files created via REST is not available to iControl
         print $tee "+-- [step: $step] make system archive\n";
         #my $js = JSON->new;
-        my $faName = "migrate-auto-${host_name}-${tmp_stmp}"; 
+        my $faName = "migrate-auto-${host_name}-${tmp_stmp}";
         if ($Label ne '') {
           $faName = "migrate-auto-${Label}-${host_name}_${tmp_stmp}";
         }
@@ -2508,7 +2548,7 @@ sub batch_mode {
           }
           $r->{items} = \@items;
           print $tee $js->encode($r)
-        } 
+        }
         else {
           print $tee "+-- [step: $step] geting ZoneRunner zone names\n";
           my $k = new CAudit( $host, $usr, $pass, $cport );
@@ -2617,7 +2657,7 @@ sub load_irules
       }
     }
   }
-  
+
   foreach my $rl (sort keys %rules) {
     if (not defined $rules{$rl}{'priority'}) {
       push @rs, $rl;
@@ -2737,7 +2777,7 @@ sub report_irules
    unless (defined $rlist) {
      print $tee "\033[34m- warning: no iRules defined in the batch file\033[0m\n";
    }
-   
+
    # scan for partitions
    foreach my $r (keys %{ $rlist }) {
      if (defined($rlist->{$r}{'partition'}) and ($rlist->{$r}{'partition'} ne 'Common')) {
@@ -2772,7 +2812,7 @@ sub report_irules
 
      my @tks = split("/", $f);
      if ($#tks > 1) {
-       printf $tee " %50s\t[\033[31mERROR\033[0m]\n", $f; 
+       printf $tee " %50s\t[\033[31mERROR\033[0m]\n", $f;
        next;
      }
      my $la = $tks[$#tks];
@@ -2797,7 +2837,7 @@ sub report_irules
 
      # remove newline
      chomp($buffer);
-     
+
      # compute sha1 digest on file
      my $oh = sha1_hex( $buffer );
 

@@ -67,7 +67,7 @@ sub verifySoapResponse
 	my ($self, $soapResponse) = @_;
 	if ( $soapResponse->fault )
 	{
-		return "soap call failed with: " . $soapResponse->faultcode . ", " . $soapResponse->faultstring;
+		return "SOAP::Failed: " . $soapResponse->faultcode . ", " . $soapResponse->faultstring;
   } else {
     return $soapResponse->result ? $soapResponse->result : 'done';
   }
