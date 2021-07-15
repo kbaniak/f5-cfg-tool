@@ -40,12 +40,13 @@ use File::Path qw(remove_tree);
 use POSIX qw(strftime);
 use Text::Diff;
 use IO::Tee;
+use URI::Escape;
 
 use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.6';
+my $version = '1.4.7';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -65,7 +66,7 @@ my $debug_rules = 0;
 # --
 
 our ( %opts );
-getopts('u:p:O:t:q:fdhAikKTrQc:C:I:JsSx:R:w:l:b:B:Z:P:D:', \%opts);
+getopts('u:p:O:t:q:fdhAikKTrQc:C:I:JsSx:R:w:l:b:B:Z:P:D:v:', \%opts);
 
 unless ($opts{'Q'}) {
   printf ". runtime location: %s, rundir: %s\n", getcwd(), $rundir;
@@ -127,6 +128,7 @@ if ($opts{'h'}){
    -Q           : quiet mode - supress logs to a file
    -O opts      : list of options param=value,param=value, use %20 to escape a white space
                   example:  base=gen8.2/test,label=ala%20ma%20kota
+   -v string    : batch mode variables (see opts for syntax)
 
  --------------------------------------------------------------------------------------------
 
@@ -1600,6 +1602,16 @@ sub load_ilx_plugins
   }
 }
 
+sub parseVariables {
+  my ($def) = @_;
+  my %dict;
+  foreach my $k ( split(',', uri_unescape($def)) ) {
+    my ($p, $v) = split '=', $k;
+    $dict{$p} = $v;
+  }
+  return \%dict;
+}
+
 #
 # Batch mode to execute set of commands
 # use -B to specify steset from a command line
@@ -1611,10 +1623,10 @@ sub batch_mode {
 
   my $j = {
     options => { },
-    steps => [ ],
-    quiet => 0
+    steps => [],
+    quiet => 0,
+    vars => { },
   };
-
 
   if ($md eq 'file') {
     if (index($fn, "/") < 0 or substr($fn,0,2) eq "./") {
@@ -1630,6 +1642,36 @@ sub batch_mode {
       my @basename = split /\//, $fn;
       terminate_with_error($tee, "batch parse", "json syntax error in the input file: $basename[$#basename]");
       exit 1;
+    }
+    # check if batch file has a requires section
+    if (defined($j->{'requires'})) {
+      if (defined($j->{'requires'}{'f5-cfg'})) {
+        my $ours = int(join("", split(/\./, $version)));
+        my $wants = int(join("", split(/\./, $j->{'requires'}{'f5-cfg'})));
+        if ($ours < $wants) {
+          terminate_with_error($tee, "batch requirements", "cannot continue as we need at leat version: $wants");
+        }
+      }
+      if (defined($j->{'requires'}{'variables'})) {
+        if (!$opts{'v'}) {
+          terminate_with_error($tee, "batch variables", "variable definition missing and required by the batch file" );
+        }
+        $j->{'vars'} = parseVariables($opts{'v'});
+        foreach my $keyName (@{ $j->{'requires'}{'variables'} }) {
+          if (!defined($j->{vars}{$keyName})) {
+            terminate_with_error($tee, "batch variables", "variable $keyName is not defined" );
+          } else {
+            $buffer =~ s/\(\($keyName\)\)/$j->{vars}{$keyName}/g;
+          }
+        }
+        # reload the batch json
+        if (isJSONString($buffer)) {
+          $j = decode_json($buffer);
+        } else {
+          terminate_with_error($tee, "batch parse", "json syntax error, after variable expansion");
+          exit 2;
+        }
+      }
     }
   } elsif ($md eq 'inline') {
     my @st = split(';', $fn);
