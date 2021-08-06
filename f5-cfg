@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 #
-# (C) Krystian Baniak 2020
+# (C) Krystian Baniak 2021
 #
 # contact: krystian.baniak@exios.pl
 # license: MIT
@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.7';
+my $version = '1.4.8';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -70,7 +70,7 @@ getopts('u:p:O:t:q:fdhAikKTrQc:C:I:JsSx:R:w:l:b:B:Z:P:D:v:', \%opts);
 
 unless ($opts{'Q'}) {
   printf ". runtime location: %s, rundir: %s\n", getcwd(), $rundir;
-  print("\x1b[92m(C) 2020, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\x1b[0m\n");
+  print("\x1b[92m(C) 2021, Krystian Baniak <krystian.baniak\@exios.pl>,  F5 restful configuration tool, version: $version\x1b[0m\n");
 }
 #-------------------------------------------------
 # advanced options parser

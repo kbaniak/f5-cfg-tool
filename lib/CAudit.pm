@@ -119,7 +119,7 @@ sub processZoneRecord
   my @records = @{ $object };
   my $soapResponse;
 
-  unless ( grep( /^$action$/, ( 'create', 'delete' ) ) ) {
+  unless ( grep( /^$action$/, ( 'create', 'delete', 'modify' ) ) ) {
     return "unsupported action";
   }
   
@@ -127,29 +127,65 @@ sub processZoneRecord
     return "unsupported resource record type";
   }
 
-  foreach my $rs (@records) {
-    unless (exists $rs->{'ttl'}) {
-      $rs->{'ttl'} = 0;
-    }
-    if ($rtype eq 'NAPTR' and $rs->{'regexp'} eq '') {
-      $rs->{'regexp'} = '""'; 
-    }
-  }
-  
-  my $rt = lc ($rtype);
-  my $method =  $action eq 'create' ? 'add' : 'delete';
-  $method .= '_' . $rt;
-  
-  my @args = (
-    SOAP::Data->name( 'view_zones' => [ { 'zone_name' => $zone, 'view_name' => $view } ] ),
-    SOAP::Data->name( "${rt}_records"  => [ \@records ] ),
-  );
+  if ((scalar @records) <= 0) { return "nothing to do"; }
 
-  if ($rt eq 'a' || $rt eq 'aaaa') {
-    push @args, SOAP::Data->name( 'sync_ptrs' => [ 0 ])
+  if ($action eq 'modify') {
+    # modify track
+    my @nrec, @orec;
+    my $rt = lc ($rtype);
+    my $method = 'update_' . $rt;
+    
+    foreach my $rs (@records) {
+      unless (exists $rs->{new}{ttl}) { $rs->{new}{ttl} = 0; }
+      unless (exists $rs->{old}{ttl}) { $rs->{old}{ttl} = 0; }
+      if ($rtype eq 'NAPTR' and $rs->{new}{regexp} eq '') { $rs->{new}{regexp} = '""'; }
+      if ($rtype eq 'NAPTR' and $rs->{old}{regexp} eq '') { $rs->{old}{regexp} = '""'; }
+      push @nrec, $rs->{new};
+      push @orec, $rs->{old};
+    }
+
+    my @args = (
+      SOAP::Data->name( 'view_zones'  => [ { 'zone_name' => $zone, 'view_name' => $view } ] ),
+      SOAP::Data->name( 'old_records' => [ \@orec ] ),
+      SOAP::Data->name( 'new_records' => [ \@nrec ] ),
+    );
+
+    if ($rt eq 'a' || $rt eq 'aaaa') {
+      push @args, SOAP::Data->name( 'sync_ptrs' => [ 0 ])
+    }
+
+    $soapResponse = $icHandle->$method(@args);
+  } 
+  else {
+    # add or delete track
+    foreach my $rs (@records) {
+      unless ($rs->{'domain_name'} =~ /.+$zone$/) {
+        #$rs->{'domain_name'} .= ".$zone";
+      }
+      unless (exists $rs->{'ttl'}) {
+        $rs->{'ttl'} = 0;
+      }
+      if ($rtype eq 'NAPTR' and $rs->{'regexp'} eq '') {
+        $rs->{'regexp'} = '""'; 
+      }
+    }
+
+    my $rt = lc ($rtype);
+    my $method =  $action eq 'create' ? 'add' : 'delete';
+    $method .= '_' . $rt;
+
+    my @args = (
+      SOAP::Data->name( 'view_zones' => [ { 'zone_name' => $zone, 'view_name' => $view } ] ),
+      SOAP::Data->name( "${rt}_records"  => [ \@records ] ),
+    );
+
+    if ($rt eq 'a' || $rt eq 'aaaa') {
+      push @args, SOAP::Data->name( 'sync_ptrs' => [ 0 ])
+    }
+    
+    $soapResponse = $icHandle->$method(@args);
   }
-  
-  $soapResponse = $icHandle->$method(@args);
+
   return $self->verifySoapResponse( $soapResponse );
 }
 
