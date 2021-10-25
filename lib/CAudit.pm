@@ -131,7 +131,8 @@ sub processZoneRecord
 
   if ($action eq 'modify') {
     # modify track
-    my @nrec, @orec;
+    my @nrec;
+    my @orec;
     my $rt = lc ($rtype);
     my $method = 'update_' . $rt;
     

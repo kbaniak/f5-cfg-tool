@@ -19,7 +19,7 @@ my $rundir = $ENV{PWD};
 BEGIN {
   use Cwd;
   use File::Basename;
-  $rundir = qx{pwd};
+  $rundir = getcwd();
   my $__base = dirname(__FILE__);
   if ( -l __FILE__) {
     $__base = dirname(readlink(__FILE__));
@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.8';
+my $version = '1.4.9';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -457,7 +457,7 @@ if ( $opts{'A'} ) {
     remove_tree("$d");
   }
 }
-print $tee "+++ job's done.";
+#print $tee "+++ job's done.";
 exit;
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -546,12 +546,18 @@ sub update_platform_properties {
 }
 # print information about F5 device (or a cluster node)
 sub print_platform_properties {
-  print $tee "system properties: \n";
-  foreach my $k (sort keys %props){
-    printf $tee "  %40s: %s\n", $k, $props{$k};
-  }
-  foreach my $k (sort keys %srun){
-    printf $tee "  %40s: %s\n", $k, $srun{$k};
+  if ($opts{'J'}) {
+    my $js = JSON->new;
+    $js->pretty;
+    print $tee $js->encode(\%props);
+  } else {
+    print $tee "system properties: \n";
+    foreach my $k (sort keys %props){
+      printf $tee "  %40s: %s\n", $k, $props{$k};
+    }
+    foreach my $k (sort keys %srun){
+      printf $tee "  %40s: %s\n", $k, $srun{$k};
+    }
   }
 }
 #
@@ -617,12 +623,10 @@ sub get_propsy {
     }
   }
   $r = query2object( $URL . 'cm/device' );
-  $p{'fovState'} = 'passive';
+  $p{'fovState'} = 'unknown';
   foreach my $e ( @{ $r->{'items'}} ) {
     if ($e->{'managementIp'} eq $host) {
-      if ($e->{'failoverState'} eq 'active'){
-        $p{'fovState'} = 'active';
-      }
+      $p{'fovState'} = $e->{'failoverState'};
     }
   }
   return %p;
