@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.4.9';
+my $version = '1.5.0';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -295,14 +295,14 @@ if ($opts{'D'} && $opts{'D'} ne "") {
 }
 # single query mode
 if ($opts{'q'}) {
- print $tee "received query: $opts{'q'}\n";
+ unless ($opts{'Q'}) { print $tee "received query: $opts{'q'}\n"; }
  my $p = $opts{'q'};
  if ($p and $p ne '-') {
    my $curl = $URL;
    if ($popts->get('bigiq') ne '') {
      $curl = $URL_BARE;
    }
-   if ($popts->get('format') eq 'json') {
+   if ($opts{'J'} or ($popts->get('format') eq 'json')) {
      print $tee query2json( $curl . $p );
    } else {
      print $tee Dumper( query2object( $curl . $p ));
