@@ -36,8 +36,20 @@ sub new
     _user  => shift,
     _pass  => shift,
     _port  => shift,
+    _timeout => 600
   };
   bless $self, $class;
+  return $self;
+}
+
+#
+# sets timeout on a handle
+sub setTimeout
+{
+	my ($self, $soapTimeout) = @_;
+  if (int($soapTimeout) > 0) {
+    $self->{'_timeout'} = int($soapTimeout);
+  }
   return $self;
 }
 
@@ -51,7 +63,7 @@ sub createHandle
   my $icHandle = SOAP::Lite
     -> uri('urn:iControl:' . $icrScope)
     -> readable(1)
-    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi");
+    -> proxy("https://$self->{'_host'}:$self->{'_port'}/iControl/iControlPortal.cgi", timeout => $self->{'_timeout'});
 
   $icHandle->transport->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
   $icHandle->transport->http_request->header(

@@ -46,7 +46,7 @@ use CAudit;
 use CCache;
 use COpts;
 
-my $version = '1.5.0';
+my $version = '1.5.1';
 my $tee = \*STDOUT;
 
 # --------- DEB -----------------
@@ -66,7 +66,7 @@ my $debug_rules = 0;
 # --
 
 our ( %opts );
-getopts('u:p:O:t:q:fdhAikKTrQc:C:I:JsSx:R:w:l:b:B:Z:P:D:v:', \%opts);
+getopts('u:p:O:t:q:fdhAikKTrQc:C:I:JsSx:R:w:l:b:B:Z:P:D:v:M:', \%opts);
 
 unless ($opts{'Q'}) {
   printf ". runtime location: %s, rundir: %s\n", getcwd(), $rundir;
@@ -108,6 +108,7 @@ if ($opts{'h'}){
    -i           : identify f5 box
    -k           : verify iRule versions and allocation to virtual servers
    -K           : verify listeners and their allocation to virtual servers
+   -M seconds   : timeout for iCR and iCR REST queries
    -c name      : create iRule or other resource from a file given in -I option
    -C name      : update iRule or other resource from a file given in -I option
    -D name      : dump given iRule to a working directory
@@ -159,6 +160,11 @@ my $wDir  = $opts{'w'} || '';
 my $Label = $opts{'l'} || '';
 my $bstep = $opts{'Z'} || '';
 my $cport = $opts{'P'} || 443;
+my $reqTm = 600;
+# update default request timeout for both iCR and iCR REST queries
+if ($opts{'M'}) {
+  $reqTm = int($opts{'M'});
+}
 my $URL_BARE = "https://$host/";
 my $URL   = "https://$host/mgmt/tm/";
 my $URLB  = "https://$host/mgmt/shared/authn/login";
@@ -176,6 +182,14 @@ my %rflags = (
   'req_not_fatal'    => 0,
   'req_error_silent' => 0
 );
+# CAudit heper
+sub createSoapCtx
+{
+  my ($_h, $_u, $_s, $_p, $_t) = @_;
+  my $k = new CAudit($_h, $_u, $_s, $_p);
+  $k->setTimeout($_t);
+  return $k;
+}
 #-------------------------------------------------
 # Authentication Cache
 my $cache = CCache->new("./cfg/.ccache.json");
@@ -231,7 +245,7 @@ if ($opts{'d'}) {
 #------------------------------------------------
 # LWP settings
 my $ua   = new LWP::UserAgent;
-$ua->timeout(600);
+$ua->timeout($reqTm);
 $ua->ssl_opts( verify_hostname => 0, SSL_verify_mode => 0x00 );
 #------------------------------------------------
 # F5 token based authentication
@@ -1145,7 +1159,7 @@ sub createResource
 
   if ($t eq 'ifile') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass, $cport );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh create sys file ifile /$part/$n source-path file://$transname" );
@@ -1174,7 +1188,7 @@ sub createResource
 
   if ($t eq 'dgroup') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass, $cport );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $dgtype = "string";
@@ -1204,7 +1218,7 @@ sub createResource
 
   if ($t eq 'monitor') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh create sys file external-monitor /$part/$n source-path file://$transname" );
@@ -1254,7 +1268,7 @@ sub updateResource
 
   if ($t eq 'ifile') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass, $cport );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file ifile /$part/$n source-path file://$transname" );
@@ -1274,7 +1288,7 @@ sub updateResource
 
   if ($t eq 'dgroup') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass, $cport );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file data-group /$part/$n source-path file://$transname" );
@@ -1293,7 +1307,7 @@ sub updateResource
 
   if ($t eq 'monitor') {
     my $transname = "/shared/tmp/tmp-auto-$n-" . $tmp_stmp;
-    my $k = new CAudit( $host, $usr, $pass, $cport );
+    my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
     $k->uploadFile( $ops, $r, $transname );
 
     my $r = runGenericCommand( "tmsh modify sys file external-monitor /$part/$n source-path file://$transname" );
@@ -1505,7 +1519,7 @@ sub wait_for_api_event{
 sub load_ilx_workspace
 {
   my ($df) = @_;
-  my $k = new CAudit( $host, $usr, $pass, $cport );
+  my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
   my $pa = 'Common';
 
   if (defined $df->{'ilx'} && defined $df->{'ilx'}{'workspaces'}) {
@@ -1736,11 +1750,11 @@ sub batch_mode {
     $j->{'options'}{'rules_location'} = $rundir . '/';
   }
 
-  if (not (defined $j->{options}{encoding})) {
+  if (!$j->{quiet}) {
     print $tee "+ final batch workdir: $wDir\n";
     print $tee "+ final batch basedir: $j->{options}{base_location}\n";
     print $tee "+ final batch ruledir: $j->{options}{rules_location}\n";
-    print $tee "+ batch output encoding: $j->{options}{encoding}\n";
+    if (defined $j->{options}{encoding}) { print $tee "+ batch output encoding: $j->{options}{encoding}\n"; }
   }
 
   #verify system matches description
@@ -1815,7 +1829,7 @@ sub batch_mode {
               }
               if (!$j->{quiet}) { print $tee "+-- [step: $step] uploading object: $kx from $ksrc\n"; }
               if (defined $j->{'options'}{'base_location'}){
-                my $k = new CAudit( $host, $usr, $pass, $cport );
+                my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
                 $k->uploadFile( $j->{'options'}, $ksrc, $kx );
               }
             }
@@ -1836,7 +1850,7 @@ sub batch_mode {
         case 'DSET' {
           if (!$j->{quiet}) { print $tee "+-- [step: $otgt[0]] download set execute: $otgt[1]\n"; }
           if ((defined $j->{'downloadset'}) && (defined $j->{'downloadset'}{$otgt[1]}) && (defined $j->{'options'}{'store_location'})) {
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             foreach my $kx ( @{ $j->{'downloadset'}{$otgt[1]} }) {
               if (!$j->{quiet}) { print $tee "   . retrieve file: \x1b[32m$kx\x1b[0m\n"; }
               $k->downloadResource($j->{'options'}, 'file', $kx, $j->{'options'}{'store_location'} . '/' . parseFileToken($kx) );
@@ -1855,7 +1869,7 @@ sub batch_mode {
             foreach my $kx ( @{ $j->{'mergeset'}{$otgt[1]} }) {
               if (defined $j->{'options'}{'base_location'}) {
                 if (!$j->{quiet}) { print $tee "  . \x1b[34mmerging file: $kx\x1b[0m\n"; }
-                my $k = new CAudit( $host, $usr, $pass, $cport );
+                my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
                 $k->uploadFile( $j->{'options'}, parseFileToken($kx), $kx );
               }
               if (defined($j->{'options'}{'verify_merge_sets'})) {
@@ -1885,7 +1899,7 @@ sub batch_mode {
           my $view = $otgt[2] || 'external';
           my $zone = $otgt[1];
           if ((defined $j->{options}{encoding}) && ($j->{options}{encoding} eq 'json')) {
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             my $zs = $k->getZoneInfo($view, $zone);
             my $js = JSON->new;
             my $r = generate_JSON_response({ view => $view, zone => $zone });
@@ -1903,7 +1917,7 @@ sub batch_mode {
             print $tee $js->encode($r)
           } else {
             if (!$j->{quiet}) { print $tee "+-- [step: $step] geting ZoneRunner zone information: $view/$zone\n"; }
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             my $zs = $k->getZoneInfo($view, $zone);
             print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
             foreach my $prop (sort keys %{ $zs->[0] }) {
@@ -1920,7 +1934,7 @@ sub batch_mode {
           my $view = $otgt[2] || 'external';
           my $zone = $otgt[1];
           if ((defined $j->{options}{encoding}) && ($j->{options}{encoding} eq 'json')) {
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             my $zs = $k->getZoneRecords($view, $zone);
             my $js = JSON->new;
             my $r = generate_JSON_response({ view => $view, zone => $zone });
@@ -1936,7 +1950,7 @@ sub batch_mode {
             print $tee $js->encode($r)
           } else {
             if (!$j->{quiet}) { print $tee "+-- [step: $step] geting ZoneRunner rrs information: $view/$zone\n"; }
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             my $zs = $k->getZoneRecords($view, $zone);
             print $tee "zone \033[32m$zone\033[0m properties in view: \033[32m$view\033[0m\n";
             foreach my $rec (sort @{ $zs->[0] }) {
@@ -1950,7 +1964,7 @@ sub batch_mode {
           my $view = $otgt[2];
           my $ttl = $otgt[5] || 0;
           if (!$j->{quiet}) { print $tee "+-- [step: $step] adding record of type A to ZoneRunner: $view/$zone\n"; }
-          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
           my @rrs = qw();
           push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
           my $zs = $k->processZoneRecord('create', $view, $zone, 'A', \@rrs );
@@ -1962,7 +1976,7 @@ sub batch_mode {
           my $view = $otgt[2];
           my $ttl = $otgt[5] || 0;
           if (!$j->{quiet}) { print $tee "+-- [step: $step] removing record of type A from ZoneRunner: $view/$zone\n"; }
-          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
           my @rrs = qw();
           push @rrs, { domain_name => $otgt[3], ip_address => $otgt[4], ttl => $ttl };
           my $zs = $k->processZoneRecord('delete', $view, $zone, 'A', \@rrs );
@@ -1974,7 +1988,7 @@ sub batch_mode {
           my $complete = 1;
           if (!$j->{quiet}) { print $tee "+-- [step: $step] processing ZoneRunner set: $otgt[1]\n"; }
           if ((defined $j->{'zoneset'}) && (defined $j->{'zoneset'}{$otgt[1]})) {
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             my $idx = 1;
             #
             # Processing
@@ -2168,7 +2182,7 @@ sub batch_mode {
            $z->{'name'} = $j->{'options'}{'ucs-file-name'} . "-" . ${tmp_stmp};
            print $tee "+-- setting ucs name to: $z->{'name'}";
         }
-        my $k = new CAudit( $host, $usr, $pass, $cport );
+        my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
         my $passw = '';
         if (defined $j->{'options'}{'ucs-secret'} and $j->{'options'}{'ucs-secret'} ne "") { $passw = $j->{'options'}{'ucs-secret'} }
         if ($popts->get('ucs_secret') ne '') { $passw = $popts->get('ucs_secret'); }
@@ -2192,7 +2206,7 @@ sub batch_mode {
       }
       case 'MAKE_SCF' {
         print $tee "+-- [step: $step] make system scf archive\n";
-        my $k = new CAudit( $host, $usr, $pass, $cport );
+        my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
         my $fname = "migrate-auto-${host_name}-${tmp_stmp}.scf";
         if (defined $j->{'options'}{'scf-file-name'}) {
           $fname = $j->{'options'}{'scf-file-name'} . "-" . ${tmp_stmp};
@@ -2253,7 +2267,7 @@ sub batch_mode {
            if ((defined $j->{'options'}{'install_do_package'}) && ($j->{'options'}{'install_do_package'}) && (defined $j->{'options'}{'declonboard_image'})) {
              my $ps = $j->{'options'}{'declonboard_image'};
              print $tee ". installing declarative onboarding package \033[33m$ps\033[0m\n";
-             my $k = new CAudit( $host, $usr, $pass, $cport );
+             my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
              #$k->uploadFile( $j->{'options'}, $ps, '/var/config/rest/downloads/' .  $ps);
              my $z = {
                operation => 'INSTALL',
@@ -2485,7 +2499,7 @@ sub batch_mode {
         if (defined $j->{'tmsh-merge'}) {
           print $tee "+-- [step: $step] merging tmsh config file: $j->{'tmsh-merge'}[$tmsh_mg]\n";
           if (defined $j->{'options'}{'base_location'}){
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             $k->uploadFile( $j->{'options'}, parseFileToken($j->{'tmsh-merge'}[$tmsh_mg]), $j->{'tmsh-merge'}[$tmsh_mg] );
           }
           my $r = loadMergeFile( $j->{'tmsh-merge'}[$tmsh_mg] );
@@ -2496,7 +2510,7 @@ sub batch_mode {
         if (defined $j->{'upload'}) {
           print $tee "+-- [step: $step] uploading object: $j->{'upload'}[$file_mg]\n";
           if (defined $j->{'options'}{'base_location'}){
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             $k->uploadFile( $j->{'options'}, parseFileToken($j->{'upload'}[$file_mg]), $j->{'upload'}[$file_mg] );
           }
           $file_mg++;
@@ -2572,7 +2586,7 @@ sub batch_mode {
           print $tee "+-- [step: $step] fetching files from remote system\n";
           foreach my $fl (sort keys %{ $j->{'retrieve'} }) {
             print $tee "  . resource from a location: $j->{'retrieve'}{$fl}\n";
-            my $k = new CAudit( $host, $usr, $pass, $cport );
+            my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
             $k->downloadResource($j->{'options'}, 'file', $j->{'retrieve'}{$fl}, $j->{'options'}{'store_location'} . '/' . $fl );
           }
         } else {
@@ -2581,7 +2595,7 @@ sub batch_mode {
       }
       case 'GET_ZONES' {
         if ((defined $j->{options}{encoding}) && ($j->{options}{encoding} eq 'json')) {
-          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
           my $view = 'external';
           my $zs = $k->getZones($view);
           my $js = JSON->new;
@@ -2597,7 +2611,7 @@ sub batch_mode {
         }
         else {
           print $tee "+-- [step: $step] geting ZoneRunner zone names\n";
-          my $k = new CAudit( $host, $usr, $pass, $cport );
+          my $k = createSoapCtx( $host, $usr, $pass, $cport, $reqTm );
           my $view = 'external';
           my $zs = $k->getZones($view);
           print $tee "configured zones in view \033[32m$view\033[0m\n";
