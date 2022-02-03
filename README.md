@@ -1,12 +1,13 @@
 # f5-cfg-tool
 RESTful provisioning and automation tool for F5 Networks BIG-IP product.
 
-Uses iControl SOAP and iControlREST API on F5 devices to facilitate operations and support of F5 devices like:
+Uses iControl SOAP and iControlREST API on F5 devices to facilitate operations and support of F5 devices:
 - manage and audit configuration elements (with full support for administrative partitions),
 - automate configuration tasks using a batch mode. This tool accepts json formatted batch files that specify actions to perform on a remote F5 system(s),
 - run reports that collect information from selected configuration entities and present it in a tabular form,
 - REST API troubleshooting and debug.
 - **new** manage ZoneRunner dns zones from command line and in a batch mode.
+- **new** returns json encoded responses (options: -Q -J) to allow integration with automation pipelines
 
 The primary application of this tool is to automate frequently used maintenance tasks, perform config audits and ensure maitenence window time is kept to minimum by eliminating human error factor.
 
@@ -255,18 +256,19 @@ Batch file contains sections that govern how it is processed:
    -p password  : password, default is admin
    -f           : password will be read from the stdin after a prompt
    -t host      : f5 mgmt interface's IP address to query
-   -o file      : output file name, default is test.xlsx
-   -a           : create full system config archive
-   -A           : create only archives, skip generating xlsx file
+   -A           : create archive containing iRules and iCall scripts
+   -l name      : label used to create archive file name (affects -A option)
    -i           : identify f5 box
    -k           : verify iRule versions and allocation to virtual servers
    -K           : verify listeners and their allocation to virtual servers
+   -M seconds   : timeout for iCR and iCR REST queries
    -c name      : create iRule or other resource from a file given in -I option
    -C name      : update iRule or other resource from a file given in -I option
    -D name      : dump given iRule to a working directory
    -I           : input resource
+   -J           : modifies batch mode to return silently json response
    -P           : port to connect to
-   -r           : retain temporal objects (used with -a and -A)
+   -r           : retain temporal objects (used with -A option)
    -s           : save config
    -S           : sync cluster
    -w           : working directory
@@ -274,13 +276,13 @@ Batch file contains sections that govern how it is processed:
    -b name      : batch mode that uses json file as input
    -B steps     : semicolon delimited list of steps, mutually exclusive with -b option
    -Z step      : select step set from a step set list, used only with a -b option
-
    -x cmd       : execute advanced script action
    -R name      : run special report name [ availability depends on version ]
    -T           : use token based authentication
    -Q           : quiet mode - supress logs to a file
    -O opts      : list of options param=value,param=value, use %20 to escape a white space
-                  example:  base=gen8.2/test,label=ala%20ma%20kota
+                  example: base=gen8.2/test,label=ala%20ma%20kota
+   -v string    : batch mode variables (see opts for syntax)
 
  --------------------------------------------------------------------------------------------
 
@@ -313,6 +315,7 @@ Batch file contains sections that govern how it is processed:
    DELETIONS           : delete objects from the f5: [ Hash(delete) of [type,priority] ]
    DEL_ZONE_A:zone:view:name:ip:ttl: delete ZoneRunner A resource record
    DOWNLOAD            : download file from remote system
+   DSET:name           : download list of files from a downloadset dictionary from a batch file, keyed by a name
    GET_ZONES           : list ZoneRunner zones
    GET_ZONE_INFO:view  : get ZoneRunner zone information
    GET_ZONE_RRS:zone:view: get ZoneRunner resource records information
@@ -343,7 +346,7 @@ Batch file contains sections that govern how it is processed:
    USE_HOST            : switch target to a host name or ip address
    VERIFY              : verify that all operations are going to be successful
    VERIFY_SET:name     : run verification procedure on a verifyset. Verify set must inlude a list of objects
-                         that specify tpe and set of items to check
+ 	                       that specify tpe and set of items to check
    WAIT_FOR:event      : waits for event to happen: cluster node become event = { online, standby, active }
    ZRSET:name          : process records from a named zonerunner list
 
