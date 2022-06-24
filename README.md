@@ -31,6 +31,16 @@ Supported features and software versions:
 
 Developped in perl script language, may be used as standalone script or in a docker/podman container - see instalation notes below.
 
+## Fast track with docker hub
+
+f5-cfg tool is now available from docker hub. Use following instructions to use it as a container:
+
+```
+$ docker pull kwbaniak/f5-cfg-tool
+$ docker run --rm -it f5-cfg bash -c "/home/rest/f5-cfg-tool/f5-cfg -t 1.2.3.4 -f -i -k"
+
+```
+
 ## Usage
 
 Just run `f5-cfg -h` to see all available options.
